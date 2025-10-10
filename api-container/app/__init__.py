@@ -2,80 +2,47 @@ from flask import Flask
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
 from flask_pymongo import PyMongo
+from .config import config
 import os
 
 # Initialize extensions
 mongo = PyMongo()
 jwt = JWTManager()
 
-# Minimal hard-coded quiz questions
-default_questions = [
-    {
-        "text": "Would you rather have a cat or a dog?",
-        "options": ["Cat", "Dog"],
-        "tag": "pets",
-    },
-    {
-        "text": "Would you rather have coffee or tea?",
-        "options": ["Coffee", "Tea"],
-        "tag": "drinks",
-    },
-    {
-        "text": "Would you rather have sweet or savory breakfast?",
-        "options": ["Sweet", "Savory"],
-        "tag": "food",
-    },
-    {
-        "text": "Would you rather be a morning person or night owl?",
-        "options": ["Morning person", "Night owl"],
-        "tag": "lifestyle",
-    },
-    {
-        "text": "Would you rather go to the beach or mountains?",
-        "options": ["Beach", "Mountains"],
-        "tag": "travel",
-    },
-]
 
-
-def initialize_database(app, mongo_instance):
-    """Seed default quiz questions if collection is empty"""
-    with app.app_context():
-        if mongo_instance.db.quiz_questions.count_documents({}) == 0:
-            mongo_instance.db.quiz_questions.insert_many(default_questions)
-            mongo_instance.db.quiz_questions.create_index("tag")
-
-
-def create_app():
+def create_app(config_name='default'):
     app = Flask(__name__)
-    CORS(app)
 
-    # Configuration
-    app.config["MONGO_URI"] = os.environ.get("MONGO_URI", "mongodb://db:27017/together")
-    app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-key")
-    app.config["JWT_SECRET_KEY"] = os.environ.get("JWT_SECRET_KEY", "jwt-secret-key")
+    # Load configuration
+    app.config.from_object(config[config_name])
+
+    # Enable CORS with proper configuration
+    CORS(app,
+         origins=["http://localhost:3000", "http://localhost:3001"],
+         supports_credentials=True,
+         allow_headers=["Content-Type", "Authorization"],
+         methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 
     # Initialize extensions
     mongo.init_app(app)
     jwt.init_app(app)
 
     # Register blueprints
-    from .routes import auth_bp, calendar_bp, messages_bp, daily_question_bp
-    from .routes.settings import settings_bp
-    from .routes.quiz import quiz_bp
+    from .controllers.auth_controller import auth_bp
+    from .controllers.daily_question_controller import daily_question_bp
+    from .controllers.quiz_controller import quiz_bp
+    from .controllers.messages_controller import messages_bp
+    from .controllers.calendar_controller import calendar_bp
 
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
-    app.register_blueprint(calendar_bp, url_prefix="/api/calendar")
-    app.register_blueprint(messages_bp, url_prefix="/api/messages")
-    app.register_blueprint(settings_bp, url_prefix="/api/settings")
     app.register_blueprint(daily_question_bp, url_prefix="/api/daily-question")
     app.register_blueprint(quiz_bp, url_prefix="/api/quiz")
+    app.register_blueprint(messages_bp, url_prefix="/api/messages")
+    app.register_blueprint(calendar_bp, url_prefix="/api/calendar")
 
-    # Seed database
-    initialize_database(app, mongo)
+    # Health check endpoint
+    @app.route("/api/health")
+    def health_check():
+        return {"status": "healthy", "message": "Together API is running"}, 200
 
     return app
-
-
-# Create application
-app = create_app()

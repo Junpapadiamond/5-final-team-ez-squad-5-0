@@ -51,13 +51,28 @@ services:
     networks:
       - app-network
 
-  # Web Container (Flask)
-  web:
-    build: ./web-container
-    container_name: together-web
+  # React Frontend Container
+  frontend:
+    build: ./frontend
+    container_name: together-frontend
     restart: always
     ports:
       - "3000:3000"
+    environment:
+      - INTERNAL_API_URL=http://api:5001/api
+      - NODE_ENV=production
+    depends_on:
+      - api
+    networks:
+      - app-network
+
+  # Legacy Web Container (Flask) - Keep for reference/migration
+  web-legacy:
+    build: ./web-container
+    container_name: together-web-legacy
+    restart: always
+    ports:
+      - "3001:3000"
     environment:
       - API_URL=http://api:5001/api
       - SECRET_KEY=web-secret-key

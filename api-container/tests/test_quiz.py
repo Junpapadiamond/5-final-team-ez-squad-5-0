@@ -1,135 +1,144 @@
-import unittest
-from unittest.mock import patch, MagicMock
-from datetime import datetime, timedelta
-from bson.objectid import ObjectId
-from flask import Flask
-from flask_jwt_extended import JWTManager, create_access_token
-from app.routes.quiz import quiz_bp
+import pytest
+from flask_jwt_extended import create_access_token
+
+from app import create_app
+from app.controllers import quiz_controller
 
 
-class TestQuizModule(unittest.TestCase):
-    def setUp(self):
-        self.app = Flask(__name__)
-        self.app.config["TESTING"] = True
-        self.app.config["JWT_SECRET_KEY"] = "test-key"
-        self.app.register_blueprint(quiz_bp, url_prefix="/api/quiz")
-        self.jwt = JWTManager(self.app)
-        self.client = self.app.test_client()
-
-        with self.app.app_context():
-            self.token = create_access_token(identity=str(ObjectId()))
-
-        self.auth_headers = {"Authorization": f"Bearer {self.token}"}
-
-        self.jwt_patcher = patch("app.routes.quiz.jwt_required")
-        self.mock_jwt_required = self.jwt_patcher.start()
-        self.mock_jwt_required.return_value = lambda f: f
-
-        self.identity_patcher = patch("app.routes.quiz.get_jwt_identity")
-        self.mock_get_jwt_identity = self.identity_patcher.start()
-        self.mock_get_jwt_identity.return_value = str(ObjectId())
-
-        self.mongo_patcher = patch("app.routes.quiz.mongo")
-        self.mock_mongo = self.mongo_patcher.start()
-
-        self.mock_users = MagicMock()
-        self.mock_quiz_batches = MagicMock()
-        self.mock_quiz_scores = MagicMock()
-        self.mock_quiz_responses = MagicMock()
-        self.mock_mongo.db.users = self.mock_users
-        self.mock_mongo.db.quiz_batches = self.mock_quiz_batches
-        self.mock_mongo.db.quiz_scores = self.mock_quiz_scores
-        self.mock_mongo.db.quiz_responses = self.mock_quiz_responses
-
-    def tearDown(self):
-        self.jwt_patcher.stop()
-        self.identity_patcher.stop()
-        self.mongo_patcher.stop()
-
-    def test_get_score_no_partner(self):
-        self.mock_users.find_one.return_value = {"_id": ObjectId()}
-        response = self.client.get("/api/quiz/score", headers=self.auth_headers)
-        self.assertEqual(response.status_code, 200)
-
-    def test_get_status_no_partner(self):
-        self.mock_users.find_one.return_value = {"_id": ObjectId()}
-        response = self.client.get("/api/quiz/status", headers=self.auth_headers)
-        self.assertEqual(response.status_code, 200)
-
-    def test_get_batch_no_partner(self):
-        self.mock_users.find_one.return_value = {"_id": ObjectId()}
-        response = self.client.get("/api/quiz/batch", headers=self.auth_headers)
-        self.assertEqual(response.status_code, 400)
-
-    def test_get_question_no_partner(self):
-        self.mock_users.find_one.return_value = {"_id": ObjectId()}
-        response = self.client.get("/api/quiz/question", headers=self.auth_headers)
-        self.assertEqual(response.status_code, 400)
-
-    def test_submit_answer_missing_params(self):
-        response = self.client.post(
-            "/api/quiz/answer", headers=self.auth_headers, json={}
-        )
-        self.assertEqual(response.status_code, 400)
-
-    def test_submit_answer_no_partner(self):
-        self.mock_users.find_one.return_value = {"_id": ObjectId()}
-        response = self.client.post(
-            "/api/quiz/answer",
-            headers=self.auth_headers,
-            json={"question_id": 1, "answer": "A"},
-        )
-        self.assertEqual(response.status_code, 400)
-
-    def test_check_partner_response_missing_params(self):
-        response = self.client.get(
-            "/api/quiz/check-partner-response", headers=self.auth_headers
-        )
-        self.assertEqual(response.status_code, 400)
-
-    def test_check_partner_response_no_partner(self):
-        self.mock_users.find_one.return_value = {"_id": ObjectId()}
-        response = self.client.get(
-            "/api/quiz/check-partner-response?question_id=1", headers=self.auth_headers
-        )
-        self.assertEqual(response.status_code, 400)
-
-    def test_get_batch_results_no_partner(self):
-        self.mock_users.find_one.return_value = {"_id": ObjectId()}
-        response = self.client.get(
-            "/api/quiz/batch/123/results", headers=self.auth_headers
-        )
-        self.assertEqual(response.status_code, 400)
-
-    def test_get_score_with_matches(self):
-        self.mock_users.find_one.return_value = {
-            "_id": ObjectId(),
-            "partner_id": str(ObjectId()),
+@pytest.fixture
+def app():
+    app = create_app()
+    app.config.update(
+        {
+            "TESTING": True,
+            "JWT_SECRET_KEY": "test-jwt-key",
         }
-        self.mock_quiz_responses.find.return_value = []
-        self.mock_quiz_scores.find_one.return_value = {"score": 100}
-        self.mock_quiz_responses.count_documents.return_value = 2
-        response = self.client.get("/api/quiz/score", headers=self.auth_headers)
-        self.assertEqual(response.status_code, 200)
+    )
+    return app
 
-    def test_get_score_with_partner_no_matches(self):
-        self.mock_users.find_one.return_value = {
-            "_id": ObjectId(),
-            "partner_id": str(ObjectId()),
-        }
-        self.mock_quiz_responses.find.return_value = []
-        self.mock_quiz_scores.find_one.return_value = {"score": 0}
-        self.mock_quiz_responses.count_documents.return_value = 0
-        response = self.client.get("/api/quiz/score", headers=self.auth_headers)
-        self.assertEqual(response.status_code, 200)
 
-    def test_get_status_with_partner(self):
-        self.mock_users.find_one.return_value = {
-            "_id": ObjectId(),
-            "partner_id": str(ObjectId()),
-        }
-        self.mock_quiz_batches.find_one.return_value = None
-        self.mock_quiz_responses.distinct.side_effect = [[], []]
-        self.mock_quiz_scores.find_one.return_value = {"score": 10}
-        response = self.client.get("/api/quiz/status", headers=self.auth_headers)
-        self.assertEqual(response.status_code, 200)
+@pytest.fixture
+def client(app):
+    return app.test_client()
+
+
+@pytest.fixture
+def auth_headers(app):
+    with app.app_context():
+        token = create_access_token(identity="user-123")
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_get_quiz_status_success(client, auth_headers, monkeypatch):
+    expected_status = {
+        "has_taken_quiz": True,
+        "quiz_count": 3,
+        "latest_quiz_date": "2024-05-17T12:00:00",
+        "available_questions": 10,
+    }
+
+    monkeypatch.setattr(
+        quiz_controller.QuizService,
+        "get_user_quiz_status",
+        staticmethod(lambda user_id: (expected_status, None)),
+    )
+
+    response = client.get("/api/quiz/status", headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.get_json() == expected_status
+
+
+def test_get_quiz_status_not_found(client, auth_headers, monkeypatch):
+    monkeypatch.setattr(
+        quiz_controller.QuizService,
+        "get_user_quiz_status",
+        staticmethod(lambda user_id: (None, "No quiz data")),
+    )
+
+    response = client.get("/api/quiz/status", headers=auth_headers)
+
+    assert response.status_code == 404
+    assert response.get_json() == {"message": "No quiz data"}
+
+
+def test_get_quiz_questions_success(client, auth_headers, monkeypatch):
+    expected_questions = {
+        "questions": [{"id": 1, "question": "Q1", "type": "text"}],
+        "total_questions": 1,
+    }
+
+    monkeypatch.setattr(
+        quiz_controller.QuizService,
+        "get_quiz_questions",
+        staticmethod(lambda user_id: (expected_questions, None)),
+    )
+
+    response = client.get("/api/quiz/questions", headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.get_json() == expected_questions
+
+
+def test_get_quiz_questions_error(client, auth_headers, monkeypatch):
+    monkeypatch.setattr(
+        quiz_controller.QuizService,
+        "get_quiz_questions",
+        staticmethod(lambda user_id: (None, "Failed to fetch questions")),
+    )
+
+    response = client.get("/api/quiz/questions", headers=auth_headers)
+
+    assert response.status_code == 404
+    assert response.get_json() == {"message": "Failed to fetch questions"}
+
+
+def test_submit_quiz_success(client, auth_headers, monkeypatch):
+    payload = [{"question_id": 1, "answer": "Yes"}]
+    expected_result = {
+        "message": "Quiz submitted successfully",
+        "quiz_id": "abc123",
+        "score": 1,
+        "total_questions": 10,
+    }
+
+    def mock_submit(user_id, answers):
+        assert answers == payload
+        return expected_result, None
+
+    monkeypatch.setattr(
+        quiz_controller.QuizService,
+        "submit_quiz_answers",
+        staticmethod(mock_submit),
+    )
+
+    response = client.post(
+        "/api/quiz/submit", headers=auth_headers, json={"answers": payload}
+    )
+
+    assert response.status_code == 200
+    assert response.get_json() == expected_result
+
+
+def test_submit_quiz_missing_answers(client, auth_headers):
+    response = client.post("/api/quiz/submit", headers=auth_headers, json={})
+
+    assert response.status_code == 400
+    assert response.get_json() == {"message": "Answers are required"}
+
+
+def test_submit_quiz_service_error(client, auth_headers, monkeypatch):
+    monkeypatch.setattr(
+        quiz_controller.QuizService,
+        "submit_quiz_answers",
+        staticmethod(lambda user_id, answers: (None, "Bad data")),
+    )
+
+    response = client.post(
+        "/api/quiz/submit",
+        headers=auth_headers,
+        json={"answers": [{"question_id": 1, "answer": "Yes"}]},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json() == {"message": "Bad data"}

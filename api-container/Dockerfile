@@ -14,4 +14,4 @@ COPY . .
 EXPOSE 5001
 
 # Run the Flask application
-CMD ["python", "run.py"]
+CMD ["python", "run_new.py"]
