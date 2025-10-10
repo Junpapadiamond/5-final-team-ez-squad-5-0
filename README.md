@@ -2,7 +2,7 @@
 
 
 ![API Container CI/CD](https://github.com/software-students-spring2025/5-final-team-ez-squad-5-0/actions/workflows/api-container-ci-cd.yml/badge.svg)
-![Web Container CI/CD](https://github.com/software-students-spring2025/5-final-team-ez-squad-5-0/actions/workflows/web-container-ci-cd.yml/badge.svg)
+![Web Container CI/CD (Archived)](https://github.com/software-students-spring2025/5-final-team-ez-squad-5-0/actions/workflows/web-container-ci-cd.yml/badge.svg)
 ![Lint](https://github.com/software-students-spring2025/5-final-team-ez-squad-5-0/actions/workflows/lint.yml/badge.svg)
 ![Event Logger](https://github.com/software-students-spring2025/5-final-team-ez-squad-5-0/actions/workflows/event-logger.yml/badge.svg)
 
@@ -11,13 +11,15 @@
 
 Together is a full-stack web application designed to help couples maintain and strengthen their relationships through structured communication tools and shared activities. The application uses a multi-container microservice architecture with Flask backends and MongoDB database.
 
+> **Note:** The legacy Flask web front end (`web-container`) is now archived. The actively maintained user experience lives in the Next.js frontend (`frontend/`). The archived container remains in the repo for reference, but its CI pipeline and tests are disabled.
+
 ## Features
 
 - **Dashboard**: Personalized home page with upcoming events and recent messages
 - **Secure Messaging**: Send real-time and scheduled messages to your partner
 - **Shared Calendar**: Coordinate events and activities together
 - **Partner Connection**: Simple system to connect with your significant other
-- **Quiz**: A fun quiz game designed to test the compatibility and help you get to know each other better
+- **Quiz**: Partner-synchronised compatibility sessions with live scoring
 - **Daily Questions**: Answer daily prompts to share with your partner
 - **Settings Management**: Customize notifications and account preferences
 
@@ -26,7 +28,7 @@ Together is a full-stack web application designed to help couples maintain and s
 
 ## Container Images
 
-- [Web Frontend](https://hub.docker.com/r/ericzzy/together-web)
+- [Web Frontend (archived)](https://hub.docker.com/r/ericzzy/together-web)
 - [API Service](https://hub.docker.com/r/ericzzy/together-api)
 
 ## Team

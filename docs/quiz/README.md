@@ -1,37 +1,46 @@
 # Quiz API
 
 ## What It Does
-Provides a longer-form questionnaire to deepen partner insight and stores quiz submissions. Requests map through `api-container/app/controllers/quiz_controller.py`; persistence and scoring live in `api-container/app/services/quiz_service.py`.
+Runs partner-synchronised compatibility sessions where both users answer the same “this or that” prompts and receive a live alignment score. HTTP layer: `api-container/app/controllers/quiz_controller.py`; orchestration and scoring: `api-container/app/services/quiz_service.py`.
 
 ## Endpoints & Critical Attributes
 - `GET /api/quiz/status` *(JWT required)*  
-  **Response:**  
-  - `has_taken_quiz`: boolean.  
-  - `quiz_count`: total submissions.  
-  - `latest_quiz_date`: ISO timestamp of newest attempt.  
-  - `available_questions`: count of current question bank.
+  Returns aggregated metrics: `total_sessions`, `completed_sessions`, `active_session_id`, `last_score`, `average_score`, and the size of the question bank.
 - `GET /api/quiz/questions` *(JWT)*  
-  **Response:** array of question objects (`id`, `question`, `type`, optional `options`) and `total_questions`.
-- `POST /api/quiz/submit` *(JWT)*  
-  **Body:** `answers` list.  
-  **Response:** `quiz_id`, simple `score` (length of answers), `total_questions`, success message.
+  Exposes the curated compatibility prompt bank (`id`, `question`, `options`, `category`) plus `default_batch_sizes`.
+- `POST /api/quiz/session/start` *(JWT)*  
+  **Body:** optional `question_count` or explicit `question_ids`.  
+  Creates (or returns) the active session for the connected partners. Response includes `created` flag alongside the session payload.
+- `GET /api/quiz/session/current` *(JWT)*  
+  Retrieves the latest in-progress session, or `session: null` when none exists.
+- `GET /api/quiz/session/<session_id>` *(JWT)*  
+  Fetches a specific session (in progress or completed) if the caller is a participant.
+- `POST /api/quiz/session/<session_id>/answer` *(JWT)*  
+  **Body:** `question_id`, `answer`.  
+  Records the caller’s answer, recomputes compatibility if both partners have finished, and returns the refreshed session state.
+
+Every session document includes:
+- `questions`: sampled list with per-question `your_answer`, `partner_answer`, and `is_match`.
+- `progress`: counts of completed answers and which questions are awaiting the partner.
+- `compatibility`: final summary (`matches`, `total`, `score`, `completed_at`) once finished.
 
 ## Core Logic Flow
-1. **Question bank** — statically defined list enables deterministic frontend rendering.
-2. **Submission validation** — ensures `answers` is a list before inserting into `quiz_responses`.
-3. **Persistence fields:** `user_id`, `answers`, `created_at`, derived `score`. Additional helper `get_user_quiz_results` expands stored records with ISO timestamps.
-4. **Status checks** — counts documents and inspects the latest submission to build dashboard-friendly status info.
+1. **Partner validation** — starting a session requires `partner_status == "connected"`. The service reuses existing in-progress sessions to keep both users aligned.
+2. **Question sampling** — selects a random subset from `COMPATIBILITY_QUESTIONS`, unless callers specify exact IDs.
+3. **Answer tracking** — nested `responses` map (`responses[user_id][question_id]`) keeps both sides’ answers. Each submission rewrites the response map atomically.
+4. **Completion & scoring** — when every question has both answers, the service marks the session `completed`, stores a `compatibility_summary`, and reports a percentage match.
+5. **Status insight** — historic sessions live in the `quiz_sessions` collection, enabling averages, last score time stamps, and active session lookups without reprocessing.
 
 ## Interaction With Other APIs
-- Requires Auth-issued JWT to identify the submitting user.
-- Quiz insights can be surfaced alongside Daily Questions for reflective discussions; Messages can notify partners about quiz completion.
-- Partner linkage is not required, but `quiz_responses` can be filtered by both partner IDs to compare results in analytics features.
+- Auth: provides user identity and partner linkage; without a connected partner, session creation fails with a helpful message.
+- Messages: can surface compatibility outcomes (e.g., send a congratulatory note) by pulling from the session summary.
+- Daily Questions: complements the quick-alignment quiz with deeper reflective prompts; both share the `users` partner metadata.
 
-## Why Offer This Quiz
-Acts as a structured conversation starter and baseline assessment beyond daily prompts. The stored history enables progress tracking or personalized recommendations later.
+## Why Offer Partner Sessions
+Instant, gamified insight encourages couples to talk through differences while celebrating overlaps. Allowing custom lengths (10/15/20 or custom counts) keeps replays fresh and tailored.
 
 ## If You’re Stuck
-- Follow handler implementations in `quiz_controller.py` for request/response shapes.
-- Inspect `QuizService.submit_quiz_answers` to understand validation and document layout.
-- Review MongoDB insert patterns (`mongo.db.quiz_responses.insert_one`) if new to PyMongo.
-- Learn more about designing survey schemas from [MongoDB schema design docs](https://www.mongodb.com/docs/manual/core/data-model-design/).
+- Review `QuizService.start_session` for sampling logic and partner checks.
+- Examine `QuizService.submit_session_answer` to see how completions and scores are computed.
+- Use `GET /api/quiz/session/<id>` to debug stored payloads directly.
+- The curated prompt list lives at the top of `quiz_service.py`; adjust or extend there when adding new themes.

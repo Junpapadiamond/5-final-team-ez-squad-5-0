@@ -14,8 +14,10 @@ Handles direct messaging between partners, including immediate sends, scheduled 
   Persists to `scheduled_messages` with `status="pending"`.
 - `GET /api/messages/scheduled` *(JWT)*  
   Lists scheduled messages with `_id`, `content`, `scheduled_for`, `sender_name`, `status`.
+- `PUT /api/messages/scheduled/<message_id>` *(JWT)*  
+  **Body:** optional `content`, optional `scheduled_for`. Updates pending scheduled messages in place.
 - `POST /api/messages/scheduled/<message_id>/cancel` *(JWT)*  
-  Cancels a pending scheduled message if owned by the caller.
+  Cancels a pending scheduled message if owned by the caller and still pending. Returns an explanatory error if it can’t be cancelled.
 - `GET /api/messages/conversation/<partner_id>` *(JWT)*  
   Pulls chronological conversation history, marks partner-sent messages as read.
 
@@ -23,8 +25,9 @@ Handles direct messaging between partners, including immediate sends, scheduled 
 1. **User resolution** — `_get_user` fetches user docs, caching results per request to avoid redundant queries.
 2. **Partner defaulting** — `_resolve_partner_id` checks `partner_status == "connected"` before assuming a receiver; otherwise requires explicit `receiver_id`.
 3. **Message formatting** — `_format_message` normalizes Mongo docs into API-ready dictionaries, stringifying IDs and timestamps.
-4. **Scheduling** — stores naive UTC timestamps so the worker (not shown here) can scan `scheduled_messages`. Cancel endpoint flips `status` to `cancelled`.
-5. **Notifications** — `send_partner_message` emails recipients when `email_notifications` is true, but exceptions are swallowed to prioritise messaging success.
+4. **Scheduling** — normalises any ISO 8601 input (with offsets or `Z`) to UTC before persisting so the worker (not shown here) has a consistent reference point. Endpoints expose `scheduled_for` in UTC (`...Z`).
+5. **Edits & cancellations** — `update_scheduled_message` lets users tweak pending messages without recreating them; cancellation surfaces clear reasons when a message is already processed.
+6. **Notifications** — `send_partner_message` emails recipients when `email_notifications` is true, but exceptions are swallowed to prioritise messaging success.
 
 ## Interaction With Other APIs
 - Auth supplies JWT identity and exposes partner linkage fields that drive receiver resolution.

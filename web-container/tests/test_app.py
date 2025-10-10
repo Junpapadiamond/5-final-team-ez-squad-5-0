@@ -5,6 +5,8 @@ import pytest
 import requests
 from unittest.mock import patch, MagicMock
 
+pytest.skip("Legacy web container archived; tests are disabled.", allow_module_level=True)
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from flask import session
 from app import app as flask_app

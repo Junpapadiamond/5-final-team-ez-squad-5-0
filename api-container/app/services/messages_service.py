@@ -139,6 +139,37 @@ class MessagesService:
             return None, f"Failed to send message: {str(exc)}"
 
     @staticmethod
+    def _normalize_scheduled_time(scheduled_for: str) -> Tuple[Optional[datetime], Optional[str]]:
+        if not scheduled_for:
+            return None, "Scheduled time is required"
+
+        try:
+            parsed_time = datetime.fromisoformat(
+                scheduled_for.replace("Z", "+00:00")
+            )
+        except ValueError:
+            return None, "Invalid scheduled time format"
+
+        # Normalize to UTC naive datetime for compatibility with the worker
+        if parsed_time.tzinfo:
+            scheduled_time = parsed_time.astimezone(timezone.utc).replace(tzinfo=None)
+        else:
+            scheduled_time = parsed_time
+
+        return scheduled_time, None
+
+    @staticmethod
+    def _format_scheduled_time_for_api(scheduled_time: Optional[datetime]) -> Optional[str]:
+        if not scheduled_time:
+            return None
+
+        if not isinstance(scheduled_time, datetime):
+            return str(scheduled_time)
+
+        scheduled_time_utc = scheduled_time.replace(tzinfo=timezone.utc)
+        return scheduled_time_utc.isoformat().replace("+00:00", "Z")
+
+    @staticmethod
     def schedule_message(
         sender_id: str,
         content: str,
@@ -164,18 +195,9 @@ class MessagesService:
             if not receiver:
                 return None, "Recipient not found"
 
-            try:
-                parsed_time = datetime.fromisoformat(
-                    scheduled_for.replace("Z", "+00:00")
-                )
-            except ValueError:
-                return None, "Invalid scheduled time format"
-
-            # Normalize to UTC naive datetime for compatibility with the worker
-            if parsed_time.tzinfo:
-                scheduled_time = parsed_time.astimezone(timezone.utc).replace(tzinfo=None)
-            else:
-                scheduled_time = parsed_time
+            scheduled_time, error = MessagesService._normalize_scheduled_time(scheduled_for)
+            if error:
+                return None, error
 
             scheduled_doc = {
                 "content": content,
@@ -194,7 +216,7 @@ class MessagesService:
                 "data": {
                     "_id": str(scheduled_doc["_id"]),
                     "content": content,
-                    "scheduled_for": scheduled_time.isoformat() + "Z",
+                    "scheduled_for": MessagesService._format_scheduled_time_for_api(scheduled_time),
                     "sender_name": sender.get("name", ""),
                     "status": scheduled_doc["status"],
                 },
@@ -218,7 +240,7 @@ class MessagesService:
             for doc in scheduled:
                 scheduled_time = doc.get("scheduled_time")
                 if isinstance(scheduled_time, datetime):
-                    scheduled_str = scheduled_time.isoformat() + "Z"
+                    scheduled_str = MessagesService._format_scheduled_time_for_api(scheduled_time)
                 else:
                     scheduled_str = scheduled_time
 
@@ -250,12 +272,68 @@ class MessagesService:
             )
 
             if result.modified_count == 0:
-                return None, "No pending scheduled message found"
+                return None, "Cannot cancel that scheduled message. It may have been sent, cancelled already, or does not belong to you."
 
             return {"message": "Scheduled message cancelled successfully"}, None
 
         except Exception as exc:
             return None, f"Failed to cancel scheduled message: {str(exc)}"
+
+    @staticmethod
+    def update_scheduled_message(
+        user_id: str,
+        message_id: str,
+        content: Optional[str] = None,
+        scheduled_for: Optional[str] = None,
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        try:
+            db_id = MessagesService._safe_object_id(message_id)
+            if not db_id:
+                return None, "Invalid message id"
+
+            update_fields: Dict[str, Any] = {}
+
+            if content is not None:
+                trimmed = content.strip()
+                if not trimmed:
+                    return None, "Message content cannot be empty"
+                update_fields["content"] = trimmed
+
+            if scheduled_for is not None:
+                scheduled_time, error = MessagesService._normalize_scheduled_time(scheduled_for)
+                if error:
+                    return None, error
+                update_fields["scheduled_time"] = scheduled_time
+
+            if not update_fields:
+                return None, "No updates supplied"
+
+            update_fields["updated_at"] = datetime.utcnow()
+
+            result = mongo.db.scheduled_messages.update_one(
+                {"_id": db_id, "sender_id": user_id, "status": "pending"},
+                {"$set": update_fields},
+            )
+
+            if result.modified_count == 0:
+                return None, "No pending scheduled message found to update"
+
+            updated_doc = mongo.db.scheduled_messages.find_one({"_id": db_id})
+
+            return {
+                "message": "Scheduled message updated successfully",
+                "data": {
+                    "_id": message_id,
+                    "content": updated_doc.get("content", ""),
+                    "scheduled_for": MessagesService._format_scheduled_time_for_api(
+                        updated_doc.get("scheduled_time")
+                    ),
+                    "status": updated_doc.get("status", "pending"),
+                },
+            }, None
+
+        except Exception as exc:
+            return None, f"Failed to update scheduled message: {str(exc)}"
 
     @staticmethod
     def get_conversation(user_id: str, partner_id: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:

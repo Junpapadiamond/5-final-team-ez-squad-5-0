@@ -1,4 +1,4 @@
-name: Web Container CI/CD
+name: Web Container CI/CD (Archived)
 
 on:
   push:
@@ -16,12 +16,13 @@ on:
 
 jobs:
   build-test-deploy:
+    # Archived: keep workflow definition for reference but skip execution
+    if: ${{ false }}
     runs-on: ubuntu-latest
     
     steps:
-      # Get the code
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - name: Skip archived workflow
+        run: echo "Web container CI/CD is archived and no longer runs automatically."
         
       # Set up Python environment
       - name: Set up Python

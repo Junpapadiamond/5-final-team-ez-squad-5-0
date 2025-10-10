@@ -44,6 +44,8 @@ export default function MessagesPage() {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [showScheduleForm, setShowScheduleForm] = useState(false);
+  const [scheduleMode, setScheduleMode] = useState<'create' | 'edit'>('create');
+  const [editingMessage, setEditingMessage] = useState<ScheduledMessage | null>(null);
   const [error, setError] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -114,13 +116,33 @@ export default function MessagesPage() {
     setError('');
 
     try {
-      const scheduledFor = `${data.scheduledDate}T${data.scheduledTime}:00.000Z`;
-      await apiClient.scheduleMessage(data.content, scheduledFor);
+      const scheduleDateTime = new Date(`${data.scheduledDate}T${data.scheduledTime}`);
+      if (Number.isNaN(scheduleDateTime.getTime())) {
+        throw new Error('Invalid date or time');
+      }
+
+      const scheduledFor = scheduleDateTime.toISOString();
+
+      if (scheduleMode === 'edit' && editingMessage) {
+        await apiClient.updateScheduledMessage(editingMessage._id, {
+          content: data.content,
+          scheduled_for: scheduledFor,
+        });
+      } else {
+        await apiClient.scheduleMessage(data.content, scheduledFor);
+      }
+
       resetScheduleForm();
       setShowScheduleForm(false);
+      setScheduleMode('create');
+      setEditingMessage(null);
       await fetchData();
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to schedule message');
+      const message =
+        err.response?.data?.message ||
+        err.message ||
+        'Failed to schedule message';
+      setError(message);
     } finally {
       setSending(false);
     }
@@ -131,8 +153,46 @@ export default function MessagesPage() {
       await apiClient.cancelScheduledMessage(messageId);
       await fetchData();
     } catch (err: any) {
-      setError('Failed to cancel scheduled message');
+      const message =
+        err.response?.data?.message ||
+        err.message ||
+        'Failed to cancel scheduled message';
+      setError(message);
     }
+  };
+
+  const handleOpenScheduleForm = () => {
+    setScheduleMode('create');
+    setEditingMessage(null);
+    resetScheduleForm();
+    setShowScheduleForm(true);
+  };
+
+  const handleEditScheduled = (message: ScheduledMessage) => {
+    setScheduleMode('edit');
+    setEditingMessage(message);
+    setShowScheduleForm(true);
+
+    const scheduledDate = new Date(message.scheduled_for);
+    const dateValue = scheduledDate.toLocaleDateString('en-CA');
+    const timeValue = scheduledDate.toLocaleTimeString('en-GB', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+
+    resetScheduleForm({
+      content: message.content,
+      scheduledDate: dateValue,
+      scheduledTime: timeValue,
+    });
+  };
+
+  const handleCloseScheduleForm = () => {
+    setShowScheduleForm(false);
+    setScheduleMode('create');
+    setEditingMessage(null);
+    resetScheduleForm();
   };
 
   const formatMessageTime = (timestamp: string) => {
@@ -172,11 +232,11 @@ export default function MessagesPage() {
             </p>
           </div>
           <button
-            onClick={() => setShowScheduleForm(!showScheduleForm)}
+            onClick={() => (showScheduleForm ? handleCloseScheduleForm() : handleOpenScheduleForm())}
             className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
           >
             <Calendar className="w-4 h-4 mr-2" />
-            Schedule Message
+            {showScheduleForm ? (scheduleMode === 'edit' ? 'Close Editor' : 'Close Scheduler') : 'Schedule Message'}
           </button>
         </div>
 
@@ -248,7 +308,7 @@ export default function MessagesPage() {
                         },
                       })}
                       placeholder="Type your message..."
-                      className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-pink-500 focus:border-pink-500"
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-pink-500 focus:border-pink-500 text-gray-900 bg-white"
                     />
                     <button
                       type="submit"
@@ -269,9 +329,11 @@ export default function MessagesPage() {
             {showScheduleForm && (
               <div className="bg-white rounded-lg shadow-sm border p-4">
                 <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-lg font-medium text-gray-900">Schedule Message</h3>
+                  <h3 className="text-lg font-medium text-gray-900">
+                    {scheduleMode === 'edit' ? 'Edit Scheduled Message' : 'Schedule Message'}
+                  </h3>
                   <button
-                    onClick={() => setShowScheduleForm(false)}
+                    onClick={handleCloseScheduleForm}
                     className="text-gray-400 hover:text-gray-600"
                   >
                     <X className="w-5 h-5" />
@@ -293,7 +355,7 @@ export default function MessagesPage() {
                           message: 'Message must be less than 500 characters',
                         },
                       })}
-                      className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-pink-500 focus:border-pink-500"
+                      className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-pink-500 focus:border-pink-500 text-gray-900 bg-white"
                       placeholder="Type your message to schedule..."
                     />
                     {scheduleErrors.content && (
@@ -345,7 +407,7 @@ export default function MessagesPage() {
                   <div className="flex justify-end space-x-2">
                     <button
                       type="button"
-                      onClick={() => setShowScheduleForm(false)}
+                      onClick={handleCloseScheduleForm}
                       className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
                     >
                       Cancel
@@ -355,7 +417,13 @@ export default function MessagesPage() {
                       disabled={sending}
                       className="px-4 py-2 border border-transparent rounded-md text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
                     >
-                      {sending ? 'Scheduling...' : 'Schedule Message'}
+                      {sending
+                        ? scheduleMode === 'edit'
+                          ? 'Updating...'
+                          : 'Scheduling...'
+                        : scheduleMode === 'edit'
+                          ? 'Update Message'
+                          : 'Schedule Message'}
                     </button>
                   </div>
                 </form>
@@ -382,18 +450,29 @@ export default function MessagesPage() {
                 ) : (
                   <div className="space-y-3">
                     {scheduledMessages.map((message) => (
-                      <div key={message._id} className="bg-blue-50 rounded-lg p-3">
+                      <div key={message._id} className="bg-blue-50 rounded-lg p-3 border border-blue-100">
                         <p className="text-sm text-gray-900 mb-2">{message.content}</p>
                         <div className="flex items-center justify-between">
-                          <p className="text-xs text-blue-600">
-                            {format(new Date(message.scheduled_for), 'MMM dd, HH:mm')}
-                          </p>
-                          <button
-                            onClick={() => handleCancelScheduled(message._id)}
-                            className="text-xs text-red-600 hover:text-red-800"
-                          >
-                            Cancel
-                          </button>
+                          <div>
+                            <p className="text-xs text-blue-600 font-medium">
+                              {format(new Date(message.scheduled_for), 'MMM dd, HH:mm')}
+                            </p>
+                            <p className="text-xs text-blue-500 capitalize">{message.status}</p>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <button
+                              onClick={() => handleEditScheduled(message)}
+                              className="text-xs text-blue-700 hover:text-blue-900 underline"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => handleCancelScheduled(message._id)}
+                              className="text-xs text-red-600 hover:text-red-800 underline"
+                            >
+                              Cancel
+                            </button>
+                          </div>
                         </div>
                       </div>
                     ))}

@@ -101,6 +101,29 @@ def cancel_scheduled_message(message_id):
         return jsonify({"message": f"Failed to cancel scheduled message: {str(e)}"}), 500
 
 
+@messages_bp.route("/scheduled/<message_id>", methods=["PUT"])
+@jwt_required()
+def update_scheduled_message(message_id):
+    try:
+        user_id = get_jwt_identity()
+        data = request.get_json() or {}
+
+        result, error = MessagesService.update_scheduled_message(
+            user_id=user_id,
+            message_id=message_id,
+            content=data.get("content"),
+            scheduled_for=data.get("scheduled_for") or data.get("scheduledTime"),
+        )
+
+        if error:
+            return jsonify({"message": error}), 400
+
+        return jsonify(result), 200
+
+    except Exception as e:
+        return jsonify({"message": f"Failed to update scheduled message: {str(e)}"}), 500
+
+
 @messages_bp.route("/conversation/<partner_id>", methods=["GET"])
 @jwt_required()
 def get_conversation(partner_id):
