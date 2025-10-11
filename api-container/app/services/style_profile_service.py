@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .. import mongo
+from .agent_llm_client import AgentLLMClient
 
 
 class StyleProfileService:
@@ -77,6 +78,16 @@ class StyleProfileService:
             }, None
 
         profile_body = StyleProfileService._build_profile(messages)
+        llm_summary = StyleProfileService._try_llm_style_summary(messages)
+        if llm_summary:
+            profile_body["style_summary"] = llm_summary.get("style_summary", profile_body["style_summary"])
+            if llm_summary.get("key_traits"):
+                profile_body["key_traits"] = llm_summary["key_traits"]
+            if llm_summary.get("signature_examples"):
+                profile_body["signature_examples"] = llm_summary["signature_examples"]
+            profile_body["ai_source"] = "openai"
+        else:
+            profile_body["ai_source"] = "legacy"
         profile_doc = {
             "user_id": user_id,
             "data": profile_body,
@@ -208,6 +219,14 @@ class StyleProfileService:
         }
 
     @staticmethod
+    def _try_llm_style_summary(messages: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        samples = [str(message.get("content", "")).strip() for message in messages if message.get("content")]
+        if not samples:
+            return None
+        payload = AgentLLMClient.summarize_style({"message_samples": samples[:10]})
+        return payload
+
+    @staticmethod
     def _build_summary(
         *,
         average_length: float,
@@ -256,7 +275,87 @@ class StyleProfileService:
                 "updated_at": StyleProfileService._format_timestamp(doc.get("updated_at")),
             }
         )
+        data["style_summary"] = StyleProfileService._to_text(data.get("style_summary")) or ""
+        data["signature_examples"] = StyleProfileService._to_list_of_text(data.get("signature_examples"))
+        data["key_traits"] = StyleProfileService._to_list_of_text(data.get("key_traits"))
+        data["emoji_frequency"] = StyleProfileService._normalise_emoji_frequency(data.get("emoji_frequency"))
+        data["top_words"] = StyleProfileService._normalise_top_words(data.get("top_words"))
         return data
+
+    @staticmethod
+    def _to_text(value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return value
+        if isinstance(value, (int, float)):
+            return str(value)
+        if isinstance(value, dict):
+            for key in ("text", "value", "summary"):
+                content = StyleProfileService._to_text(value.get(key))
+                if content:
+                    return content
+        if isinstance(value, list) and value:
+            parts = [StyleProfileService._to_text(item) for item in value]
+            parts = [item for item in parts if item]
+            if parts:
+                return "; ".join(parts)
+        try:
+            return str(value)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _to_list_of_text(value: Any) -> List[str]:
+        if not value:
+            return []
+        if isinstance(value, list):
+            items = []
+            for item in value:
+                text = StyleProfileService._to_text(item)
+                if text:
+                    items.append(text)
+            return items
+        text = StyleProfileService._to_text(value)
+        return [text] if text else []
+
+    @staticmethod
+    def _normalise_emoji_frequency(value: Any) -> List[Dict[str, Any]]:
+        if not isinstance(value, list):
+            return []
+        normalised = []
+        for entry in value:
+            if not isinstance(entry, dict):
+                continue
+            emoji = StyleProfileService._to_text(entry.get("emoji"))
+            count = entry.get("count")
+            if emoji:
+                try:
+                    count_int = int(count) if count is not None else None
+                except Exception:
+                    count_int = None
+                normalised.append({"emoji": emoji, "count": count_int or 0})
+        return normalised
+
+    @staticmethod
+    def _normalise_top_words(value: Any) -> List[Dict[str, Any]]:
+        if not isinstance(value, list):
+            return []
+        words = []
+        for entry in value:
+            if isinstance(entry, dict):
+                word = StyleProfileService._to_text(entry.get("word"))
+                count = entry.get("count")
+            else:
+                word = StyleProfileService._to_text(entry)
+                count = None
+            if word:
+                try:
+                    count_int = int(count) if count is not None else None
+                except Exception:
+                    count_int = None
+                words.append({"word": word, "count": count_int or 0})
+        return words
 
     @staticmethod
     def _format_timestamp(value: Any) -> Optional[str]:

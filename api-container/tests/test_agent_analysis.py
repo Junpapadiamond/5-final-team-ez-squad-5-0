@@ -1,5 +1,3 @@
-from types import SimpleNamespace
-
 import pytest
 from flask_jwt_extended import create_access_token
 
@@ -7,6 +5,7 @@ from app import create_app
 from app.controllers import agent_controller
 from app.services.agent_analysis_service import AgentAnalysisService
 from app.services.openai_client import OpenAIClient
+from types import SimpleNamespace
 
 
 @pytest.fixture
@@ -45,23 +44,84 @@ def test_analyze_input_generates_feedback(monkeypatch):
         lambda user_id, **kwargs: ({"style_summary": "Warm tone"}, None),
     )
     monkeypatch.setattr(
-        "app.services.agent_analysis_service.OpenAIClient.summarize_tone",
-        lambda text: "Warm and caring tone. Respond with appreciation.",
+        "app.services.agent_analysis_service.AgentOrchestrator.analyze_tone",
+        lambda user_id, text: {
+            "sentiment": "positive",
+            "confidence": 0.87,
+            "tone_summary": "Warm and playful. Keep the appreciation flowing.",
+            "coaching_tips": ["Mention something specific you appreciate."],
+            "strengths": ["Affectionate tone."],
+            "suggested_reply": "Maybe add a quick compliment before you hit send.",
+        },
     )
+    mongo_stub = SimpleNamespace(
+        db=SimpleNamespace(
+            agent_tone_cache=SimpleNamespace(
+                find_one=lambda query: None,
+                update_one=lambda query, update, upsert=False: None,
+            )
+        )
+    )
+    monkeypatch.setattr("app.services.agent_analysis_service.mongo", mongo_stub)
 
     result, error = AgentAnalysisService.analyze_input("user-789", "Hey love! Can't wait for dinner 😊")
 
     assert error is None
     assert result["analysis"]["sentiment"] == "positive"
-    assert result["analysis"]["sentiment_probability_positive"] >= 0.55
-    assert result["llm_feedback"]
+    assert result["analysis"]["sentiment_probability_positive"] == 0.87
+    assert result["llm_feedback"] == "Warm and playful. Keep the appreciation flowing."
     assert captured_content["user-789"][0].startswith("Hey love")
     assert result["style_profile"]["style_summary"] == "Warm tone"
     assert "tips" in result and result["tips"]
+    assert result["ai_source"] == "openai"
+    assert result["suggested_reply"]
+
+
+def test_analyze_input_falls_back_to_legacy(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.agent_analysis_service.StyleProfileService.register_sample",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.services.agent_analysis_service.StyleProfileService.get_style_profile",
+        lambda user_id, **kwargs: ({"style_summary": "Measured"}, None),
+    )
+    monkeypatch.setattr(
+        "app.services.agent_analysis_service.AgentOrchestrator.analyze_tone",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.services.agent_analysis_service.SentimentModel.predict",
+        staticmethod(lambda text: SimpleNamespace(label="neutral", probability_positive=0.42)),
+    )
+    monkeypatch.setattr(
+        "app.services.agent_analysis_service.OpenAIClient.is_available",
+        staticmethod(lambda: True),
+    )
+    monkeypatch.setattr(
+        "app.services.agent_analysis_service.OpenAIClient.summarize_tone",
+        lambda text: "Legacy fallback summary.",
+    )
+    mongo_stub = SimpleNamespace(
+        db=SimpleNamespace(
+            agent_tone_cache=SimpleNamespace(
+                find_one=lambda query: None,
+                update_one=lambda query, update, upsert=False: None,
+            )
+        )
+    )
+    monkeypatch.setattr("app.services.agent_analysis_service.mongo", mongo_stub)
+
+    result, error = AgentAnalysisService.analyze_input("user-123", "Short draft.")
+
+    assert error is None
+    assert result["analysis"]["sentiment"] == "neutral"
+    assert result["llm_feedback"] == "Legacy fallback summary."
+    assert result["ai_source"] == "legacy"
 
 
 def test_agent_analyze_endpoint(client, auth_headers, monkeypatch):
-    sample_result = {"analysis": {"sentiment": "neutral"}, "tips": ["Example"], "style_profile": {}}
+    sample_result = {"analysis": {"sentiment": "neutral"}, "tips": ["Example"], "style_profile": {}, "ai_source": "legacy"}
 
     monkeypatch.setattr(
         agent_controller.AgentAnalysisService,

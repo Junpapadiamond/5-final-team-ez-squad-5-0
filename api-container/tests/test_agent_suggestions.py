@@ -1,12 +1,11 @@
-from datetime import datetime, timedelta
-from types import SimpleNamespace
-
 import pytest
 from flask_jwt_extended import create_access_token
 
 from app import create_app
 from app.controllers import agent_controller
 from app.services.agent_suggestion_service import AgentSuggestionService
+from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 
 class StubCursor:
@@ -72,6 +71,10 @@ def test_agent_suggestions_service(monkeypatch):
             events=SimpleNamespace(
                 find=lambda query: StubCursor(event_docs),
             ),
+            agent_coaching_cache=SimpleNamespace(
+                find_one=lambda query: None,
+                update_one=lambda query, update, upsert=False: None,
+            ),
         ),
     )
 
@@ -79,6 +82,19 @@ def test_agent_suggestions_service(monkeypatch):
     monkeypatch.setattr(
         "app.services.agent_suggestion_service.StyleProfileService",
         SimpleNamespace(get_style_profile=lambda user_id, **kwargs: ({"style_summary": "Warm & playful"}, None)),
+    )
+    monkeypatch.setattr(
+        "app.services.agent_suggestion_service.AgentOrchestrator.plan_coaching",
+        lambda user_id: [
+            {
+                "id": "llm-1",
+                "type": "message_draft",
+                "title": "Share appreciation",
+                "summary": "Send a note thanking your partner for a recent support moment.",
+                "confidence": 0.83,
+                "call_to_action": "Draft a heartfelt message now.",
+            }
+        ],
     )
 
     suggestions, error = AgentSuggestionService.get_suggestions("user-123")

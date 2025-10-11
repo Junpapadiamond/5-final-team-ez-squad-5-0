@@ -75,6 +75,10 @@ def test_style_profile_computation(monkeypatch):
     )
 
     monkeypatch.setattr("app.services.style_profile_service.mongo", mongo_stub)
+    monkeypatch.setattr(
+        "app.services.style_profile_service.AgentLLMClient.summarize_style",
+        lambda context: {"style_summary": "LLM-enhanced summary", "signature_examples": ["Example line"]},
+    )
 
     profile, error = StyleProfileService.get_style_profile("user-1", force_refresh=True)
 
@@ -110,6 +114,10 @@ def test_style_profile_cached(monkeypatch):
     )
 
     monkeypatch.setattr("app.services.style_profile_service.mongo", mongo_stub)
+    monkeypatch.setattr(
+        "app.services.style_profile_service.AgentLLMClient.summarize_style",
+        lambda context: None,
+    )
 
     profile, error = StyleProfileService.get_style_profile("user-2")
     assert error is None
