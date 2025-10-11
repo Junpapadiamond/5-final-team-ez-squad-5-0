@@ -1,10 +1,19 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 import AuthLayout from '@/components/layout/AuthLayout';
 import { useAuthStore } from '@/lib/auth';
 import apiClient from '@/lib/api';
-import { Sparkles, RefreshCcw, MessageCircle, Calendar, ClipboardList } from 'lucide-react';
+import {
+  Sparkles,
+  RefreshCcw,
+  MessageCircle,
+  Calendar,
+  ClipboardList,
+  Bot,
+  Gauge,
+  AlertCircle,
+} from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
 interface StyleProfile {
@@ -27,6 +36,27 @@ interface SuggestionCard {
   payload?: Record<string, unknown>;
 }
 
+interface AgentAnalysisMetrics {
+  length: {
+    characters: number;
+    words: number;
+  };
+  emoji_count: number;
+  punctuation: Record<string, number>;
+  sentiment: string;
+  sentiment_probability_positive: number;
+  keywords: string[];
+}
+
+interface AgentAnalysisResult {
+  analysis: AgentAnalysisMetrics;
+  strengths: string[];
+  tips: string[];
+  style_profile?: Record<string, unknown>;
+  llm_feedback?: string | null;
+  generated_at?: string;
+}
+
 const iconForType: Record<string, JSX.Element> = {
   message_draft: <MessageCircle className="w-5 h-5 text-pink-600" />,
   daily_question: <ClipboardList className="w-5 h-5 text-blue-600" />,
@@ -40,6 +70,10 @@ export default function AgentPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
+  const [sampleMessage, setSampleMessage] = useState('');
+  const [analysis, setAnalysis] = useState<AgentAnalysisResult | null>(null);
+  const [analysisError, setAnalysisError] = useState('');
+  const [analyzing, setAnalyzing] = useState(false);
 
   const loadData = async (force = false) => {
     setRefreshing(true);
@@ -58,6 +92,43 @@ export default function AgentPage() {
       setRefreshing(false);
     }
   };
+  const handleAnalyze = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setAnalysisError('');
+    const trimmed = sampleMessage.trim();
+    if (!trimmed) {
+      setAnalysisError('Enter a message to analyze.');
+      return;
+    }
+
+    setAnalyzing(true);
+    try {
+      const result = await apiClient.analyzeAgentMessage(trimmed);
+      setAnalysis(result);
+    } catch (err: any) {
+      setAnalysis(null);
+      setAnalysisError(err.response?.data?.message || err.message || 'Failed to analyze message');
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  const sentimentBadge = useMemo(() => {
+    if (!analysis) {
+      return null;
+    }
+    const sentiment = analysis.analysis?.sentiment ?? '';
+    const classes: Record<string, string> = {
+      positive: 'bg-emerald-100 text-emerald-700',
+      negative: 'bg-red-100 text-red-700',
+      neutral: 'bg-slate-100 text-slate-600',
+    };
+    return (
+      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${classes[sentiment] || 'bg-slate-100 text-slate-600'}`}>
+        {sentiment || 'unknown'}
+      </span>
+    );
+  }, [analysis]);
 
   useEffect(() => {
     loadData();
@@ -228,6 +299,138 @@ export default function AgentPage() {
 
         {renderStyleProfile()}
         {renderSuggestions()}
+
+        <div className="bg-white border rounded-lg p-6 shadow-sm space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">Tone Analyzer</h2>
+              <p className="text-sm text-gray-600">
+                Compare Together Agent heuristics with OpenAI-powered tone feedback in real time.
+              </p>
+            </div>
+            <div className="flex items-center space-x-2">
+              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-600">
+                Logic
+              </span>
+              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-50 text-indigo-600">
+                OpenAI
+              </span>
+            </div>
+          </div>
+
+          <form onSubmit={handleAnalyze} className="space-y-3">
+            <label htmlFor="agent-sample" className="block text-sm font-medium text-gray-700">
+              Paste a message you&apos;re about to send
+            </label>
+            <textarea
+              id="agent-sample"
+              value={sampleMessage}
+              onChange={(event) => setSampleMessage(event.target.value)}
+              rows={4}
+              placeholder="Hey love, I appreciate you taking care of dinner tonight..."
+              className="block w-full rounded-md border border-gray-300 px-3 py-2 focus:border-pink-500 focus:outline-none focus:ring-pink-500"
+            />
+            {analysisError && (
+              <div className="inline-flex items-center text-sm text-red-600">
+                <AlertCircle className="w-4 h-4 mr-1" /> {analysisError}
+              </div>
+            )}
+            <div className="flex items-center justify-end space-x-3">
+              {analysis?.generated_at && (
+                <span className="text-xs text-gray-400">
+                  Last analyzed{' '}
+                  {formatDistanceToNow(new Date(analysis.generated_at), {
+                    addSuffix: true,
+                  })}
+                </span>
+              )}
+              <button
+                type="submit"
+                disabled={analyzing}
+                className="inline-flex items-center px-4 py-2 rounded-md border border-transparent text-sm font-medium text-white bg-pink-600 hover:bg-pink-700 disabled:opacity-50"
+              >
+                <Bot className="w-4 h-4 mr-2" />
+                {analyzing ? 'Analyzing...' : 'Analyze Tone'}
+              </button>
+            </div>
+          </form>
+
+          {analysis && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="border border-gray-100 rounded-lg p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center space-x-2">
+                    <Gauge className="w-4 h-4 text-blue-600" />
+                    <h3 className="text-sm font-semibold text-gray-800">Together Agent Logic</h3>
+                  </div>
+                  {sentimentBadge}
+                </div>
+                <ul className="text-xs text-gray-600 space-y-1">
+                  <li>
+                    <span className="font-medium text-gray-700">Words:</span>{' '}
+                    {analysis.analysis?.length?.words ?? 0}
+                  </li>
+                  <li>
+                    <span className="font-medium text-gray-700">Characters:</span>{' '}
+                    {analysis.analysis?.length?.characters ?? 0}
+                  </li>
+                  <li>
+                    <span className="font-medium text-gray-700">Emoji count:</span>{' '}
+                    {analysis.analysis?.emoji_count ?? 0}
+                  </li>
+                  <li>
+                    <span className="font-medium text-gray-700">Positive tone likelihood:</span>{' '}
+                    {Math.round((analysis.analysis?.sentiment_probability_positive ?? 0) * 100)}%
+                  </li>
+                  {analysis.analysis?.keywords?.length ? (
+                    <li>
+                      <span className="font-medium text-gray-700">Keywords:</span>{' '}
+                      {analysis.analysis.keywords.join(', ')}
+                    </li>
+                  ) : null}
+                </ul>
+              </div>
+
+              <div className="border border-gray-100 rounded-lg p-4">
+                <h3 className="text-sm font-semibold text-gray-800 mb-2">Coaching Tips</h3>
+                <ul className="space-y-2 text-sm text-gray-700">
+                  {analysis.tips?.map((tip, index) => (
+                    <li key={`${tip}-${index}`} className="pl-3 border-l-2 border-pink-200">
+                      {tip}
+                    </li>
+                  ))}
+                </ul>
+                {analysis.strengths?.length > 0 && (
+                  <div className="mt-4">
+                    <h4 className="text-xs uppercase tracking-wide text-gray-500 mb-1">Strengths</h4>
+                    <ul className="space-y-1 text-xs text-emerald-700">
+                      {analysis.strengths.map((strength, index) => (
+                        <li key={`${strength}-${index}`}>• {strength}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+
+              <div className="border border-indigo-100 rounded-lg p-4 bg-indigo-50/40">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center space-x-2">
+                    <Sparkles className="w-4 h-4 text-indigo-600" />
+                    <h3 className="text-sm font-semibold text-indigo-700">OpenAI Tone Feedback</h3>
+                  </div>
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold uppercase tracking-wide bg-indigo-100 text-indigo-700">
+                    OpenAI
+                  </span>
+                </div>
+                <p className="text-sm text-indigo-900 leading-relaxed">
+                  {analysis.llm_feedback
+                    ? analysis.llm_feedback
+                    : 'OpenAI feedback unavailable. Check your API key in the backend if you expect AI guidance here.'}
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </AuthLayout>
   );

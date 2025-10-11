@@ -63,3 +63,33 @@ def test_get_answers_includes_partner(monkeypatch):
     assert result["your_answer"]["answer"] == "Sunrise walk"
     assert result["partner_answer"]["user_name"] == "Partner"
     assert result["both_answered"] is True
+
+
+def test_unanswered_entries_are_hidden(monkeypatch):
+    today = datetime.utcnow().date().isoformat()
+    user_id = str(ObjectId())
+
+    unanswered_entry = {
+        "_id": ObjectId(),
+        "user_id": user_id,
+        "question": "What made you smile today?",
+        "answered": False,
+        "answer": None,
+        "date": today,
+    }
+
+    mongo_stub = SimpleNamespace(
+        db=SimpleNamespace(
+            daily_questions=SimpleNamespace(
+                find_one=lambda query: unanswered_entry if query["user_id"] == user_id else None
+            ),
+            users=SimpleNamespace(find_one=lambda query: {"_id": ObjectId(user_id), "name": "You"}),
+        )
+    )
+
+    monkeypatch.setattr("app.services.daily_question_service.mongo", mongo_stub)
+
+    result = DailyQuestionService.get_answers(user_id)
+
+    assert result["your_answer"] is None
+    assert result["both_answered"] is False

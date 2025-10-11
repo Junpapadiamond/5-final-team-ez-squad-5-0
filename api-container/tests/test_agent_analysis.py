@@ -6,6 +6,7 @@ from flask_jwt_extended import create_access_token
 from app import create_app
 from app.controllers import agent_controller
 from app.services.agent_analysis_service import AgentAnalysisService
+from app.services.openai_client import OpenAIClient
 
 
 @pytest.fixture
@@ -83,3 +84,26 @@ def test_agent_analyze_endpoint(client, auth_headers, monkeypatch):
 def test_agent_analyze_requires_content(client, auth_headers):
     response = client.post("/api/agent/analyze", headers=auth_headers, json={})
     assert response.status_code == 400
+
+
+def test_openai_client_handles_init_type_error(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "fake-key")
+    original_client = OpenAIClient._client
+    OpenAIClient._client = None
+
+    class BrokenOpenAI:
+        def __init__(self, *args, **kwargs):
+            raise TypeError("proxies")
+
+    monkeypatch.setattr("app.services.openai_client.OpenAI", BrokenOpenAI)
+    monkeypatch.setattr(
+        "app.services.openai_client.OpenAIClient._get_httpx_version",
+        staticmethod(lambda: "0.26.0"),
+    )
+
+    try:
+        assert OpenAIClient.summarize_tone("test message") is None
+        assert OpenAIClient._client is None
+    finally:
+        OpenAIClient._client = original_client
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)

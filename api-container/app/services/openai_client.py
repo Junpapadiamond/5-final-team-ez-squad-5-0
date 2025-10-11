@@ -26,8 +26,31 @@ class OpenAIClient:
 
         if cls._client is None:
             api_key = os.getenv("OPENAI_API_KEY")
-            cls._client = OpenAI(api_key=api_key)
+            try:
+                cls._client = OpenAI(api_key=api_key)
+            except TypeError as exc:
+                httpx_version = cls._get_httpx_version()
+                logger.warning(
+                    "OpenAI client initialization failed due to incompatible httpx%s: %s",
+                    f" (installed={httpx_version})" if httpx_version else "",
+                    exc,
+                )
+                cls._client = None
+                return None
+            except Exception as exc:  # pragma: no cover - unexpected init failure
+                logger.warning("OpenAI client initialization failed: %s", exc)
+                cls._client = None
+                return None
         return cls._client
+
+    @staticmethod
+    def _get_httpx_version() -> Optional[str]:
+        try:  # pragma: no cover - diagnostic helper
+            import httpx
+
+            return getattr(httpx, "__version__", None)
+        except Exception:
+            return None
 
     @classmethod
     def summarize_tone(cls, text: str) -> Optional[str]:

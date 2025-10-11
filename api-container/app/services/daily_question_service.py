@@ -163,9 +163,19 @@ class DailyQuestionService:
         if not entry:
             return None
 
-        answered_at = entry.get("answered_at")
-        if isinstance(answered_at, datetime):
-            answered_at = answered_at.isoformat() + "Z"
+        answered_flag = entry.get("answered", bool(entry.get("answer")))
+        if not answered_flag and not entry.get("answer"):
+            return None
+
+        answered_at_value = entry.get("answered_at")
+        if isinstance(answered_at_value, datetime):
+            answered_at_iso = answered_at_value.isoformat() + "Z"
+        elif isinstance(answered_at_value, str):
+            answered_at_iso = answered_at_value
+        else:
+            answered_at_iso = None
+
+        question_date = entry.get("date")
 
         return {
             "_id": str(entry.get("_id")),
@@ -173,7 +183,8 @@ class DailyQuestionService:
             "user_name": (user_doc or {}).get("name"),
             "question": entry.get("question"),
             "answer": entry.get("answer"),
-            "answered": entry.get("answered", bool(entry.get("answer"))),
-            "answered_at": answered_at,
-            "date": answered_at or entry.get("date"),
+            "answered": answered_flag,
+            "answered_at": answered_at_iso,
+            "question_date": question_date,
+            "date": answered_at_iso or question_date,
         }

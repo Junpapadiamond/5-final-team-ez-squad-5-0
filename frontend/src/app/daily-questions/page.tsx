@@ -13,24 +13,28 @@ interface AnswerForm {
 }
 
 interface DailyQuestion {
-  _id: string;
   question: string;
   date: string;
+  answered?: boolean;
+  answer?: string | null;
 }
 
 interface DailyAnswer {
   _id: string;
-  question_id: string;
   user_id: string;
-  user_name: string;
+  user_name?: string;
+  question: string;
   answer: string;
-  date: string;
+  answered: boolean;
+  answered_at?: string | null;
+  question_date?: string;
 }
 
 interface DailyAnswers {
-  question: DailyQuestion;
+  question: DailyQuestion | null;
   your_answer: DailyAnswer | null;
   partner_answer: DailyAnswer | null;
+  both_answered: boolean;
 }
 
 export default function DailyQuestionsPage() {
@@ -47,7 +51,9 @@ export default function DailyQuestionsPage() {
     handleSubmit,
     formState: { errors },
     reset,
-  } = useForm<AnswerForm>();
+  } = useForm<AnswerForm>({
+    defaultValues: { answer: '' },
+  });
 
   useEffect(() => {
     loadDailyQuestion();
@@ -60,7 +66,7 @@ export default function DailyQuestionsPage() {
       setCurrentQuestion(question);
     } catch (err: any) {
       if (err.response?.status !== 404) {
-        setError('Failed to load today&apos;s question');
+        setError("Failed to load today's question");
       }
     }
   };
@@ -76,16 +82,33 @@ export default function DailyQuestionsPage() {
     }
   };
 
+  useEffect(() => {
+    if (answers?.your_answer?.answered) {
+      reset({ answer: answers.your_answer.answer || '' });
+    } else {
+      reset({ answer: '' });
+    }
+  }, [answers?.your_answer?.answered, answers?.your_answer?.answer, reset]);
+
   const onAnswerSubmit = async (data: AnswerForm) => {
     setSubmitting(true);
     setError('');
     setMessage('');
 
     try {
-      await apiClient.answerDailyQuestion(data.answer);
-      setMessage('Your answer has been submitted!');
-      reset();
-      await loadDailyAnswers();
+      const trimmedAnswer = data.answer.trim();
+      if (!trimmedAnswer) {
+        setError('Please provide an answer');
+        setSubmitting(false);
+        return;
+      }
+
+      const alreadyAnswered = Boolean(answers?.your_answer?.answered);
+
+      await apiClient.answerDailyQuestion(trimmedAnswer);
+      setMessage(alreadyAnswered ? 'Your answer has been updated!' : 'Your answer has been submitted!');
+
+      await Promise.all([loadDailyAnswers(), loadDailyQuestion()]);
     } catch (err: any) {
       setError(err.response?.data?.message || 'Failed to submit answer');
     } finally {
@@ -146,54 +169,62 @@ export default function DailyQuestionsPage() {
               </p>
             </div>
 
-            {/* Answer Form */}
-            {!answers?.your_answer ? (
-              <form onSubmit={handleSubmit(onAnswerSubmit)} className="space-y-4">
-                <div>
-                  <label htmlFor="answer" className="block text-sm font-medium text-gray-700">
-                    Your Answer
-                  </label>
-                  <textarea
-                    id="answer"
-                    rows={4}
-                    {...register('answer', {
-                      required: 'Please provide an answer',
-                      maxLength: {
-                        value: 500,
-                        message: 'Answer must be less than 500 characters',
-                      },
-                    })}
-                    className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-pink-500 focus:border-pink-500"
-                    placeholder="Share your thoughts..."
-                  />
-                  {errors.answer && (
-                    <p className="mt-1 text-sm text-red-600">{errors.answer.message}</p>
-                  )}
-                </div>
-
-                <div className="flex justify-end">
-                  <button
-                    type="submit"
-                    disabled={submitting}
-                    className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-pink-600 hover:bg-pink-700 disabled:opacity-50"
-                  >
-                    <Send className="w-4 h-4 mr-2" />
-                    {submitting ? 'Submitting...' : 'Submit Answer'}
-                  </button>
-                </div>
-              </form>
-            ) : (
-              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                <div className="flex items-center mb-2">
-                  <div className="bg-green-100 p-1 rounded-full mr-2">
+            <form onSubmit={handleSubmit(onAnswerSubmit)} className="space-y-4">
+              {answers?.your_answer?.answered && (
+                <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-sm text-green-800 flex items-start">
+                  <div className="bg-green-100 p-1 rounded-full mr-2 mt-0.5">
                     <MessageCircle className="w-4 h-4 text-green-600" />
                   </div>
-                  <span className="text-sm font-medium text-green-800">
-                    You've already answered today's question!
-                  </span>
+                  <div>
+                    <p>You can update your answer anytime today.</p>
+                    {answers.your_answer.answered_at && (
+                      <p className="text-green-700 mt-1">
+                        Last updated {format(new Date(answers.your_answer.answered_at), 'MMM dd, yyyy • h:mm a')}.
+                      </p>
+                    )}
+                  </div>
                 </div>
+              )}
+
+              <div>
+                <label htmlFor="answer" className="block text-sm font-medium text-gray-700">
+                  {answers?.your_answer?.answered ? 'Update your answer' : 'Your Answer'}
+                </label>
+                <textarea
+                  id="answer"
+                  rows={4}
+                  {...register('answer', {
+                    required: 'Please provide an answer',
+                    maxLength: {
+                      value: 500,
+                      message: 'Answer must be less than 500 characters',
+                    },
+                  })}
+                  className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-pink-500 focus:border-pink-500"
+                  placeholder="Share your thoughts..."
+                />
+                {errors.answer && (
+                  <p className="mt-1 text-sm text-red-600">{errors.answer.message}</p>
+                )}
               </div>
-            )}
+
+              <div className="flex justify-end">
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-pink-600 hover:bg-pink-700 disabled:opacity-50"
+                >
+                  <Send className="w-4 h-4 mr-2" />
+                  {submitting
+                    ? answers?.your_answer?.answered
+                      ? 'Updating...'
+                      : 'Submitting...'
+                    : answers?.your_answer?.answered
+                      ? 'Update Answer'
+                      : 'Submit Answer'}
+                </button>
+              </div>
+            </form>
           </div>
         )}
 
@@ -215,9 +246,11 @@ export default function DailyQuestionsPage() {
                     </div>
                     <div>
                       <h3 className="font-medium text-gray-900">Your Answer</h3>
-                      <p className="text-sm text-gray-500">
-                        {format(new Date(answers.your_answer.date), 'MMM dd, yyyy • h:mm a')}
-                      </p>
+                      {answers.your_answer.answered_at && (
+                        <p className="text-sm text-gray-500">
+                          {format(new Date(answers.your_answer.answered_at), 'MMM dd, yyyy • h:mm a')}
+                        </p>
+                      )}
                     </div>
                   </div>
                   <p className="text-gray-800 leading-relaxed pl-10">
@@ -242,9 +275,11 @@ export default function DailyQuestionsPage() {
                       <h3 className="font-medium text-gray-900">
                         {answers.partner_answer.user_name}'s Answer
                       </h3>
-                      <p className="text-sm text-gray-500">
-                        {format(new Date(answers.partner_answer.date), 'MMM dd, yyyy • h:mm a')}
-                      </p>
+                      {answers.partner_answer.answered_at && (
+                        <p className="text-sm text-gray-500">
+                          {format(new Date(answers.partner_answer.answered_at), 'MMM dd, yyyy • h:mm a')}
+                        </p>
+                      )}
                     </div>
                   </div>
                   <p className="text-gray-800 leading-relaxed pl-10">
