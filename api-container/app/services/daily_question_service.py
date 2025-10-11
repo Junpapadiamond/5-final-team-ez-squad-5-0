@@ -1,6 +1,9 @@
 from datetime import datetime, date
-from .. import mongo
+from typing import Any, Dict, Optional
+from bson import ObjectId
 import random
+
+from .. import mongo
 
 
 class DailyQuestionService:
@@ -104,3 +107,73 @@ class DailyQuestionService:
 
         except Exception as e:
             return None, f"Failed to submit answer: {str(e)}"
+
+    @staticmethod
+    def get_answers(user_id: str) -> Dict[str, Any]:
+        today = date.today().isoformat()
+
+        user_doc = DailyQuestionService._get_user(user_id)
+        partner_id = (user_doc or {}).get("partner_id")
+
+        user_entry = mongo.db.daily_questions.find_one({"user_id": user_id, "date": today})
+        partner_entry = (
+            mongo.db.daily_questions.find_one({"user_id": partner_id, "date": today})
+            if partner_id
+            else None
+        )
+
+        partner_doc = DailyQuestionService._get_user(partner_id) if partner_id else None
+
+        question_entry = user_entry or partner_entry
+        question_payload = (
+            {
+                "question": question_entry.get("question"),
+                "date": question_entry.get("date"),
+            }
+            if question_entry
+            else None
+        )
+
+        your_answer = DailyQuestionService._format_answer(user_entry, user_doc)
+        partner_answer = DailyQuestionService._format_answer(partner_entry, partner_doc)
+
+        return {
+            "question": question_payload,
+            "your_answer": your_answer,
+            "partner_answer": partner_answer,
+            "both_answered": bool(your_answer and your_answer.get("answered")) and bool(
+                partner_answer and partner_answer.get("answered")
+            ),
+        }
+
+    @staticmethod
+    def _get_user(user_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not user_id:
+            return None
+        try:
+            doc = mongo.db.users.find_one({"_id": ObjectId(user_id)})
+            if doc:
+                doc["_id"] = str(doc["_id"])
+            return doc
+        except Exception:
+            return None
+
+    @staticmethod
+    def _format_answer(entry: Optional[Dict[str, Any]], user_doc: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if not entry:
+            return None
+
+        answered_at = entry.get("answered_at")
+        if isinstance(answered_at, datetime):
+            answered_at = answered_at.isoformat() + "Z"
+
+        return {
+            "_id": str(entry.get("_id")),
+            "user_id": entry.get("user_id"),
+            "user_name": (user_doc or {}).get("name"),
+            "question": entry.get("question"),
+            "answer": entry.get("answer"),
+            "answered": entry.get("answered", bool(entry.get("answer"))),
+            "answered_at": answered_at,
+            "date": answered_at or entry.get("date"),
+        }

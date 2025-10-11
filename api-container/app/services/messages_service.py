@@ -80,7 +80,8 @@ class MessagesService:
             )
 
             user_cache: Dict[str, Dict[str, Any]] = {}
-            formatted = [MessagesService._format_message(m, user_cache) for m in messages]
+            formatted_desc = [MessagesService._format_message(m, user_cache) for m in messages]
+            formatted = list(reversed(formatted_desc))
 
             return {"messages": formatted, "total_messages": len(formatted)}, None
 

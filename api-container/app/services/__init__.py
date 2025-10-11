@@ -6,6 +6,7 @@ from .daily_question_service import DailyQuestionService
 from .quiz_service import QuizService
 from .style_profile_service import StyleProfileService
 from .agent_suggestion_service import AgentSuggestionService
+from .agent_analysis_service import AgentAnalysisService
 
 __all__ = [
     "AuthService",
@@ -16,4 +17,5 @@ __all__ = [
     "QuizService",
     "StyleProfileService",
     "AgentSuggestionService",
+    "AgentAnalysisService",
 ]

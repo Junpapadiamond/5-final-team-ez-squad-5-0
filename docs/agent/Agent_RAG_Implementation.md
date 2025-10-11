@@ -69,6 +69,8 @@
 6. **Style fingerprint groundwork**
    - Generate lightweight linguistic profiles per user (emoji density, punctuation, exemplar messages).
    - Store refreshed summaries in `style_profiles` for later prompt conditioning.
+   - Capture new user samples through `/api/agent/analyze` so tone learning improves with every draft.
+   - When `OPENAI_API_KEY` is provided, augment the analysis with OpenAI's GPT models for richer tone feedback.
 
 ### Phase 2 – Agentic Workflow MVP (1 sprint)
 1. **Workflow definition**
@@ -80,6 +82,7 @@
      - Send reminder via Messages API.
      - Generate calendar suggestion using RAG context (“Plan something around your shared interest in hiking.”).
      - Draft supportive message using LLM with retrieved context and the stored style fingerprint.
+   - Provide immediate feedback on drafted text via `/api/agent/analyze`, refreshing style fingerprints as users iterate.
 3. **API surface**
    - `/api/agent/actions` GET → returns pending suggestions with metadata (`type`, `confidence`, `source_ids`).
    - `/api/agent/actions/<id>/execute` POST → user approval to send message or create event.

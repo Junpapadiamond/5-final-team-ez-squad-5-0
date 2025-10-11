@@ -22,6 +22,7 @@ export default function Navbar() {
     { href: '/messages', label: 'Messages' },
     { href: '/partner', label: 'Partner' },
     { href: '/quiz', label: 'Quiz' },
+    { href: '/agent', label: 'Agent' },
     { href: '/settings', label: 'Settings' },
   ];
 

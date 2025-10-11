@@ -52,13 +52,9 @@ def get_daily_answers():
     try:
         user_id = get_jwt_identity()
 
-        # TODO: Implement actual logic to fetch user's and partner's answers
-        # For now, return empty arrays
-        return jsonify({
-            "user_answer": None,
-            "partner_answer": None,
-            "both_answered": False
-        }), 200
+        result = DailyQuestionService.get_answers(user_id)
+
+        return jsonify(result), 200
 
     except Exception as e:
         return jsonify({"message": f"Failed to get answers: {str(e)}"}), 500

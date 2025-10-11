@@ -95,9 +95,54 @@ class StyleProfileService:
         return profile, None
 
     @staticmethod
+    def register_sample(user_id: str, content: str) -> None:
+        if not content or not content.strip():
+            return
+
+        collection = getattr(mongo.db, "style_samples", None)
+        if collection is None:
+            return
+
+        sample_doc = {
+            "user_id": user_id,
+            "content": content.strip(),
+            "created_at": datetime.utcnow(),
+        }
+
+        collection.insert_one(sample_doc)
+
+        overflow_cursor = collection.find({"user_id": user_id}).sort("created_at", -1).skip(300)
+        overflow_ids = [doc["_id"] for doc in overflow_cursor]
+        if overflow_ids:
+            collection.delete_many({"_id": {"$in": overflow_ids}})
+
+    @staticmethod
     def _fetch_messages(user_id: str, limit: int) -> List[Dict[str, Any]]:
-        cursor = mongo.db.messages.find({"sender_id": user_id}).sort("created_at", -1).limit(limit)
-        return [doc for doc in cursor if doc.get("content")]
+        messages_cursor = mongo.db.messages.find({"sender_id": user_id}).sort("created_at", -1).limit(limit)
+        messages = [doc for doc in messages_cursor if doc.get("content")]
+
+        samples = []
+        collection = getattr(mongo.db, "style_samples", None)
+        if collection is not None:
+            samples_cursor = collection.find({"user_id": user_id}).sort("created_at", -1).limit(limit)
+            samples = [
+                {
+                    "_id": doc.get("_id"),
+                    "sender_id": user_id,
+                    "content": doc.get("content"),
+                    "created_at": doc.get("created_at"),
+                }
+                for doc in samples_cursor
+                if doc.get("content")
+            ]
+
+        combined = messages + samples
+        combined.sort(
+            key=lambda item: item.get("created_at") or datetime.min,
+            reverse=True,
+        )
+
+        return combined[:limit]
 
     @staticmethod
     def _build_profile(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -180,10 +225,15 @@ class StyleProfileService:
         elif emoji_density < 0.01:
             summary_bits.append("Rarely uses emojis, tends to keep messages straightforward.")
 
-        if punctuation.get("!") and punctuation.get("!") / max(punctuation.total(), 1) > 0.2:
+        punctuation_total = sum(punctuation.values()) or 1
+
+        exclaim_ratio = punctuation.get("!", 0) / punctuation_total
+        question_ratio = punctuation.get("?", 0) / punctuation_total
+
+        if exclaim_ratio > 0.2:
             summary_bits.append("Often uses exclamation marks for enthusiastic tone.")
 
-        if punctuation.get("?") and punctuation.get("?") / max(punctuation.total(), 1) > 0.2:
+        if question_ratio > 0.2:
             summary_bits.append("Frequently asks questions, suggesting an engaging conversational style.")
 
         if average_words >= 18:

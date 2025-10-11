@@ -42,6 +42,13 @@ def create_app(config_name='default'):
     app.register_blueprint(calendar_bp, url_prefix="/api/calendar")
     app.register_blueprint(agent_bp, url_prefix="/api/agent")
 
+    @app.after_request
+    def add_cache_headers(response):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
+
     # Health check endpoint
     @app.route("/api/health")
     def health_check():

@@ -20,6 +20,7 @@ Together is a full-stack web application designed to help couples maintain and s
 - **Shared Calendar**: Coordinate events and activities together
 - **Partner Connection**: Simple system to connect with your significant other
 - **Quiz**: Partner-synchronised compatibility sessions with live scoring
+- **Agent Suggestions**: Personalized prompts and drafts that proactively keep the conversation going
 - **Daily Questions**: Answer daily prompts to share with your partner
 - **Settings Management**: Customize notifications and account preferences
 
@@ -88,6 +89,8 @@ For reference, here are the main environment variables used:
 - `MAIL_USERNAME=your-email@gmail.com`
 - `MAIL_PASSWORD=your-app-password`
 - `MAIL_DEFAULT_SENDER=together-app@example.com`
+- `OPENAI_API_KEY` *(optional)* – set this to enable LLM-powered tone feedback in the Agent panel.
+- `OPENAI_AGENT_MODEL` *(optional, default `gpt-4o-mini`)* – override the model used when the API key is present.
 
 ### Web Frontend (`together-web`)
 - `API_URL=http://api:5001/api`

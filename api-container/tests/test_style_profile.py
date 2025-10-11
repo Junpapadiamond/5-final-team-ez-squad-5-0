@@ -66,6 +66,11 @@ def test_style_profile_computation(monkeypatch):
                     {filter["user_id"]: update["$set"]}
                 ),
             ),
+            style_samples=SimpleNamespace(
+                insert_one=lambda doc: None,
+                find=lambda query: StubCursor([]),
+                delete_many=lambda query: None,
+            ),
         )
     )
 
@@ -95,6 +100,11 @@ def test_style_profile_cached(monkeypatch):
             style_profiles=SimpleNamespace(
                 find_one=lambda query: recent_doc,
                 update_one=lambda *args, **kwargs: None,
+            ),
+            style_samples=SimpleNamespace(
+                insert_one=lambda doc: None,
+                find=lambda query: StubCursor([]),
+                delete_many=lambda query: None,
             ),
         )
     )
