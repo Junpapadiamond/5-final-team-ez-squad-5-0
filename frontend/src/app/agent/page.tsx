@@ -24,6 +24,16 @@ interface StyleProfile {
   message_count?: number;
   updated_at?: string;
   cached?: boolean;
+  key_traits?: string[];
+  ai_source?: string;
+}
+
+interface SuggestionPayload {
+  call_to_action?: string | null;
+  suggested_message?: string | null;
+  tone_hint?: string | null;
+  secondary_text?: string | null;
+  suggested_window?: string | null;
 }
 
 interface SuggestionCard {
@@ -31,9 +41,10 @@ interface SuggestionCard {
   type: string;
   title: string;
   summary: string;
-  confidence?: number;
+  confidence?: number | null;
   generated_at?: string;
-  payload?: Record<string, unknown>;
+  payload?: SuggestionPayload | null;
+  ai_source?: string;
 }
 
 interface AgentAnalysisMetrics {
@@ -46,6 +57,7 @@ interface AgentAnalysisMetrics {
   sentiment: string;
   sentiment_probability_positive: number;
   keywords: string[];
+  emotional_drivers?: string[];
 }
 
 interface AgentAnalysisResult {
@@ -55,6 +67,10 @@ interface AgentAnalysisResult {
   style_profile?: Record<string, unknown>;
   llm_feedback?: string | null;
   generated_at?: string;
+  ai_source?: string;
+  suggested_reply?: string | null;
+  warnings?: string[];
+  cached?: boolean;
 }
 
 const iconForType: Record<string, JSX.Element> = {
@@ -155,9 +171,22 @@ export default function AgentPage() {
                 : 'Fresh snapshot'}
             </p>
           </div>
-          <span className="inline-flex items-center px-3 py-1 text-xs font-medium rounded-full bg-pink-100 text-pink-700">
-            {styleProfile.cached ? 'cached' : 'refreshed'}
-          </span>
+          <div className="flex items-center space-x-2">
+            <span className="inline-flex items-center px-3 py-1 text-xs font-medium rounded-full bg-pink-100 text-pink-700">
+              {styleProfile.cached ? 'cached' : 'refreshed'}
+            </span>
+            {styleProfile.ai_source && (
+              <span
+                className={`inline-flex items-center px-3 py-1 text-xs font-medium rounded-full ${
+                  styleProfile.ai_source === 'openai'
+                    ? 'bg-indigo-100 text-indigo-700'
+                    : 'bg-gray-100 text-gray-600'
+                }`}
+              >
+                {styleProfile.ai_source === 'openai' ? 'LLM summary' : 'Logic summary'}
+              </span>
+            )}
+          </div>
         </div>
 
         {styleProfile.style_summary && (
@@ -195,6 +224,16 @@ export default function AgentPage() {
                   </span>
                 ))}
               </div>
+            </div>
+          )}
+          {styleProfile.key_traits && styleProfile.key_traits.length > 0 && (
+            <div>
+              <h3 className="text-sm font-semibold text-gray-700 mb-2">Key Traits</h3>
+              <ul className="text-sm text-gray-700 space-y-1 list-disc list-inside">
+                {styleProfile.key_traits.map((trait: string, index: number) => (
+                  <li key={`${trait}-${index}`}>{trait}</li>
+                ))}
+              </ul>
             </div>
           )}
         </div>
@@ -237,17 +276,48 @@ export default function AgentPage() {
                 {iconForType[suggestion.type] ?? <Sparkles className="w-5 h-5 text-gray-500" />}
                 <h3 className="text-base font-semibold text-gray-900">{suggestion.title}</h3>
               </div>
-              {typeof suggestion.confidence === 'number' && (
-                <span className="text-xs text-gray-500">{Math.round(suggestion.confidence * 100)}% match</span>
-              )}
+              <div className="flex items-center space-x-2">
+                {typeof suggestion.confidence === 'number' && (
+                  <span className="text-xs text-gray-500">{Math.round(suggestion.confidence * 100)}% match</span>
+                )}
+                {suggestion.ai_source && (
+                  <span
+                    className={`px-2 py-0.5 rounded-full text-[11px] font-semibold uppercase tracking-wide ${
+                      suggestion.ai_source === 'openai'
+                        ? 'bg-indigo-100 text-indigo-700'
+                        : 'bg-gray-100 text-gray-600'
+                    }`}
+                  >
+                    {suggestion.ai_source === 'openai' ? 'LLM' : 'Logic'}
+                  </span>
+                )}
+              </div>
             </div>
             <p className="text-sm text-gray-700">{suggestion.summary}</p>
-            {suggestion.payload && suggestion.payload.secondary_text && (
+            {suggestion.payload?.secondary_text && (
               <p className="text-xs text-gray-500">
-                {(suggestion.payload.secondary_text as string).length > 160
-                  ? `${(suggestion.payload.secondary_text as string).slice(0, 160)}…`
-                  : (suggestion.payload.secondary_text as string)}
+                {suggestion.payload.secondary_text.length > 160
+                  ? `${suggestion.payload.secondary_text.slice(0, 160)}…`
+                  : suggestion.payload.secondary_text}
               </p>
+            )}
+            {suggestion.payload?.call_to_action && (
+              <div className="border border-blue-100 rounded-md p-3 bg-blue-50/40">
+                <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide mb-1">
+                  Next Step
+                </p>
+                <p className="text-sm text-blue-900">{suggestion.payload.call_to_action}</p>
+              </div>
+            )}
+            {suggestion.payload?.suggested_message && (
+              <div className="border border-pink-100 rounded-md p-3 bg-pink-50/40">
+                <p className="text-xs font-semibold text-pink-700 uppercase tracking-wide mb-1">
+                  Suggested message
+                </p>
+                <p className="text-sm text-pink-900 leading-relaxed">
+                  {suggestion.payload.suggested_message}
+                </p>
+              </div>
             )}
             {suggestion.generated_at && (
               <p className="text-xs text-gray-400">
@@ -365,6 +435,18 @@ export default function AgentPage() {
                   </div>
                   {sentimentBadge}
                 </div>
+                <div className="flex items-center justify-between text-[11px] uppercase tracking-wide mb-2">
+                  <span className="font-semibold text-gray-500">Source</span>
+                  <span
+                    className={`px-2 py-0.5 rounded-full ${
+                      analysis.ai_source === 'openai'
+                        ? 'bg-indigo-100 text-indigo-700'
+                        : 'bg-gray-100 text-gray-600'
+                    }`}
+                  >
+                    {analysis.ai_source === 'openai' ? 'LLM powered' : 'Logic fallback'}
+                  </span>
+                </div>
                 <ul className="text-xs text-gray-600 space-y-1">
                   <li>
                     <span className="font-medium text-gray-700">Words:</span>{' '}
@@ -386,6 +468,12 @@ export default function AgentPage() {
                     <li>
                       <span className="font-medium text-gray-700">Keywords:</span>{' '}
                       {analysis.analysis.keywords.join(', ')}
+                    </li>
+                  ) : null}
+                  {analysis.analysis?.emotional_drivers && analysis.analysis.emotional_drivers.length > 0 ? (
+                    <li>
+                      <span className="font-medium text-gray-700">Emotional drivers:</span>{' '}
+                      {analysis.analysis.emotional_drivers.join(', ')}
                     </li>
                   ) : null}
                 </ul>
@@ -412,7 +500,7 @@ export default function AgentPage() {
                 )}
               </div>
 
-              <div className="border border-indigo-100 rounded-lg p-4 bg-indigo-50/40">
+              <div className="border border-indigo-100 rounded-lg p-4 bg-indigo-50/40 space-y-3">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center space-x-2">
                     <Sparkles className="w-4 h-4 text-indigo-600" />
@@ -427,6 +515,24 @@ export default function AgentPage() {
                     ? analysis.llm_feedback
                     : 'OpenAI feedback unavailable. Check your API key in the backend if you expect AI guidance here.'}
                 </p>
+                {analysis.suggested_reply && (
+                  <div className="border border-indigo-200 rounded-md p-3 bg-white/50">
+                    <p className="text-xs font-semibold text-indigo-700 uppercase tracking-wide mb-1">
+                      Suggested next move
+                    </p>
+                    <p className="text-sm text-indigo-900">{analysis.suggested_reply}</p>
+                  </div>
+                )}
+                {analysis.warnings && analysis.warnings.length > 0 && (
+                  <div className="border border-amber-200 rounded-md p-3 bg-amber-50">
+                    <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-1">Warnings</p>
+                    <ul className="space-y-1 text-sm text-amber-900 list-disc list-inside">
+                      {analysis.warnings.map((warning, index) => (
+                        <li key={`${warning}-${index}`}>{warning}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
             </div>
           )}
