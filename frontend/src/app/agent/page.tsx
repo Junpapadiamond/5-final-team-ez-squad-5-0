@@ -13,6 +13,8 @@ import {
   Bot,
   Gauge,
   AlertCircle,
+  PlayCircle,
+  CheckCircle2,
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
@@ -83,6 +85,7 @@ export default function AgentPage() {
   const { user } = useAuthStore();
   const [styleProfile, setStyleProfile] = useState<StyleProfile | null>(null);
   const [suggestions, setSuggestions] = useState<SuggestionCard[]>([]);
+  const [automationQueue, setAutomationQueue] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
@@ -95,12 +98,13 @@ export default function AgentPage() {
     setRefreshing(true);
     setError('');
     try {
-      const [profile, suggestionList] = await Promise.all([
+      const [profile, actionData] = await Promise.all([
         apiClient.getStyleProfile(force),
         apiClient.getAgentSuggestions(),
       ]);
       setStyleProfile(profile);
-      setSuggestions(suggestionList);
+      setSuggestions(actionData.suggestions);
+      setAutomationQueue(actionData.automation_queue);
     } catch (err: any) {
       setError(err.response?.data?.message || err.message || 'Failed to load agent data');
     } finally {
@@ -126,6 +130,24 @@ export default function AgentPage() {
       setAnalysisError(err.response?.data?.message || err.message || 'Failed to analyze message');
     } finally {
       setAnalyzing(false);
+    }
+  };
+
+  const handleExecuteAction = async (actionId: string) => {
+    try {
+      await apiClient.executeAgentAction(actionId);
+      await loadData(true);
+    } catch (err: any) {
+      setError(err.response?.data?.message || err.message || 'Failed to execute agent action');
+    }
+  };
+
+  const handleAcknowledgeAction = async (actionId: string) => {
+    try {
+      await apiClient.submitAgentFeedback(actionId, { status: 'acknowledged' });
+      await loadData(true);
+    } catch (err: any) {
+      setError(err.response?.data?.message || err.message || 'Failed to acknowledge agent action');
     }
   };
 
@@ -257,6 +279,72 @@ export default function AgentPage() {
     );
   };
 
+  const renderAutomationQueue = () => {
+    return (
+      <div className="bg-white border rounded-lg p-6 shadow-sm space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-gray-900 flex items-center space-x-2">
+            <Bot className="w-5 h-5 text-indigo-600" />
+            <span>Automation Queue</span>
+          </h2>
+          <span className="inline-flex items-center px-3 py-1 text-xs font-medium rounded-full bg-indigo-100 text-indigo-700">
+            {automationQueue.length} pending
+          </span>
+        </div>
+
+        {automationQueue.length === 0 ? (
+          <p className="text-sm text-gray-500">No automated actions awaiting approval.</p>
+        ) : (
+          <div className="space-y-3">
+            {automationQueue.map((item) => (
+              <div key={item._id} className="border rounded-lg p-4 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-gray-800">{item.action_type}</p>
+                    <p className="text-xs text-gray-500">Workflow: {item.workflow}</p>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <span className="text-xs text-gray-500">{Math.round((item.confidence || 0) * 100)}% confidence</span>
+                    {item.requires_approval && (
+                      <span className="inline-flex items-center px-2 py-0.5 text-xs font-semibold rounded-full bg-amber-100 text-amber-700">
+                        Needs approval
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {item.payload?.question && (
+                  <p className="text-sm text-gray-600">Question: {item.payload.question}</p>
+                )}
+                {item.payload?.suggested_message && (
+                  <p className="text-sm text-gray-600">Suggested: {item.payload.suggested_message}</p>
+                )}
+                {item.payload?.idea && (
+                  <p className="text-sm text-gray-600">Idea: {item.payload.idea}</p>
+                )}
+                <div className="flex items-center space-x-3">
+                  <button
+                    type="button"
+                    onClick={() => handleExecuteAction(item._id)}
+                    className="inline-flex items-center px-3 py-1 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700"
+                  >
+                    <PlayCircle className="w-4 h-4 mr-1" /> Execute
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleAcknowledgeAction(item._id)}
+                    className="inline-flex items-center px-3 py-1 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200"
+                  >
+                    <CheckCircle2 className="w-4 h-4 mr-1" /> Acknowledge
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const renderSuggestions = () => {
     if (suggestions.length === 0) {
       return (
@@ -369,13 +457,14 @@ export default function AgentPage() {
 
         {renderStyleProfile()}
         {renderSuggestions()}
+        {renderAutomationQueue()}
 
         <div className="bg-white border rounded-lg p-6 shadow-sm space-y-4">
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-lg font-semibold text-gray-900">Tone Analyzer</h2>
               <p className="text-sm text-gray-600">
-                Compare Together Agent heuristics with OpenAI-powered tone feedback in real time.
+                Paste what you plan to send; the agent keeps your vibe, flags tone, and offers a gentle next move you can build on.
               </p>
             </div>
             <div className="flex items-center space-x-2">

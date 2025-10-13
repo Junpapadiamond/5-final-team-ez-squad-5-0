@@ -7,6 +7,13 @@ from .quiz_service import QuizService
 from .style_profile_service import StyleProfileService
 from .agent_suggestion_service import AgentSuggestionService
 from .agent_analysis_service import AgentAnalysisService
+from .agent_activity_service import AgentActivityService
+from .agent_workflow_engine import AgentWorkflowEngine, AgentActionPlan
+from .agent_action_queue_service import AgentActionQueueService
+from .agent_decision_service import AgentDecisionService
+from .agent_audit_service import AgentAuditService
+from .agent_execution_service import AgentExecutionService
+from .agent_feedback_service import AgentFeedbackService
 
 __all__ = [
     "AuthService",
@@ -18,4 +25,12 @@ __all__ = [
     "StyleProfileService",
     "AgentSuggestionService",
     "AgentAnalysisService",
+    "AgentActivityService",
+    "AgentWorkflowEngine",
+    "AgentActionPlan",
+    "AgentActionQueueService",
+    "AgentDecisionService",
+    "AgentAuditService",
+    "AgentExecutionService",
+    "AgentFeedbackService",
 ]

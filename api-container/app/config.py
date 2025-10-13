@@ -12,6 +12,7 @@ class Config:
     AGENT_MODEL_STYLE = os.environ.get("AGENT_MODEL_STYLE", "gpt-4o-mini")
     AGENT_TONE_CACHE_HOURS = os.environ.get("AGENT_TONE_CACHE_HOURS", "3")
     AGENT_COACHING_CACHE_HOURS = os.environ.get("AGENT_COACHING_CACHE_HOURS", "6")
+    INTERNAL_SERVICE_TOKEN = os.environ.get("INTERNAL_SERVICE_TOKEN", "dev-internal-token")
 
 
 class DevelopmentConfig(Config):

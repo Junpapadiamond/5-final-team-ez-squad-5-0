@@ -407,7 +407,7 @@ class AgentLLMClient:
 
         parts.append("Draft message:\n" + message)
         parts.append(
-            "Return JSON with sentiment (positive/neutral/negative/mixed), confidence (0-1), short tone_summary, strengths[], coaching_tips[], emotional_drivers[], optional suggested_reply, warnings[] (omit when empty). Keep each string under 160 characters."
+            "Return JSON with sentiment (positive/neutral/negative/mixed), confidence (0-1), short tone_summary, strengths[], coaching_tips[], emotional_drivers[], optional suggested_reply, warnings[] (omit when empty). Keep each string under 160 characters. The suggested_reply must stay in the original sender's perspective, preserve their meaning, keep casual chat tone (not formal email), and nudge with a gentle follow-up question or supportive note. Never simulate the partner's response."
         )
 
         return "\n\n".join(parts)

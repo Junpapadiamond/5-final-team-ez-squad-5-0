@@ -34,6 +34,7 @@ def create_app(config_name='default'):
     from .controllers.messages_controller import messages_bp
     from .controllers.calendar_controller import calendar_bp
     from .controllers.agent_controller import agent_bp
+    from .controllers.internal_controller import internal_bp
 
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
     app.register_blueprint(daily_question_bp, url_prefix="/api/daily-question")
@@ -41,6 +42,7 @@ def create_app(config_name='default'):
     app.register_blueprint(messages_bp, url_prefix="/api/messages")
     app.register_blueprint(calendar_bp, url_prefix="/api/calendar")
     app.register_blueprint(agent_bp, url_prefix="/api/agent")
+    app.register_blueprint(internal_bp, url_prefix="/api/internal")
 
     @app.after_request
     def add_cache_headers(response):
