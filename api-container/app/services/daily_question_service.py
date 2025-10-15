@@ -4,6 +4,7 @@ from bson import ObjectId
 import random
 
 from .. import mongo
+from .agent_activity_service import AgentActivityService
 
 
 class DailyQuestionService:
@@ -97,6 +98,22 @@ class DailyQuestionService:
                     }
                 }
             )
+
+            try:
+                AgentActivityService.record_event(
+                    user_id=user_id,
+                    event_type="daily_question_answered",
+                    source="daily_question_service",
+                    scenario="daily_check_in",
+                    payload={
+                        "question": question["question"],
+                        "answer": answer,
+                        "date": today,
+                    },
+                    dedupe_key=f"daily-answer:{user_id}:{today}",
+                )
+            except Exception:
+                pass
 
             return {
                 "message": "Answer submitted successfully",

@@ -99,7 +99,18 @@ class AgentAnalysisService:
             "warnings": payload.get("warnings", []),
             "ai_source": "openai",
             "generated_at": datetime.utcnow().isoformat() + "Z",
+            "retrieval_sources": payload.get("retrieval_sources", []),
         }
+
+        llm_metadata: Dict[str, Any] = {}
+        if payload.get("model"):
+            llm_metadata["model"] = payload.get("model")
+        if payload.get("raw"):
+            llm_metadata["has_raw"] = True
+        if payload.get("retrieval_sources"):
+            llm_metadata["retrieval_sources"] = payload.get("retrieval_sources")
+        if llm_metadata:
+            result["llm_metadata"] = llm_metadata
 
         return result
 

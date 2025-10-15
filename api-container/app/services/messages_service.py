@@ -1,8 +1,11 @@
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List, Tuple
+
 from bson import ObjectId
+
 from .. import mongo
 from ..email_utils import send_partner_message
+from .agent_activity_service import AgentActivityService
 
 
 class MessagesService:
@@ -129,7 +132,39 @@ class MessagesService:
                     # Swallow email errors so we don't block the main flow
                     pass
 
-            formatted = MessagesService._format_message(message_doc, {sender_id: sender, target_receiver_id: receiver})
+            formatted = MessagesService._format_message(
+                message_doc, {sender_id: sender, target_receiver_id: receiver}
+            )
+
+            payload = {
+                "message_id": formatted["_id"],
+                "preview": (formatted.get("content") or "")[:160],
+                "recipient_id": target_receiver_id,
+                "sender_id": sender_id,
+            }
+            dedupe_base = f"msg:{formatted['_id']}"
+            try:
+                AgentActivityService.record_event(
+                    user_id=sender_id,
+                    event_type="message_sent",
+                    source="messages_service",
+                    scenario="daily_check_in",
+                    payload=payload,
+                    dedupe_key=f"{dedupe_base}:sender",
+                    occurred_at=message_doc["created_at"],
+                )
+                AgentActivityService.record_event(
+                    user_id=target_receiver_id,
+                    event_type="message_received",
+                    source="messages_service",
+                    scenario="daily_check_in",
+                    payload=payload,
+                    dedupe_key=f"{dedupe_base}:receiver",
+                    occurred_at=message_doc["created_at"],
+                )
+            except Exception:
+                # Activity tracking should never block message delivery
+                pass
 
             return {
                 "message": "Message sent successfully",

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Optional
+from typing import List, Optional, Sequence
 
 try:  # pragma: no cover - optional dependency
     from openai import OpenAI
@@ -130,3 +130,31 @@ class OpenAIClient:
         except Exception as exc:  # pragma: no cover - network errors
             logger.warning("OpenAI chat completion fallback failed: %s", exc)
             return None
+
+    @classmethod
+    def embed_text(cls, text: str) -> Optional[List[float]]:
+        embeddings = cls.embed_texts([text])
+        return embeddings[0] if embeddings else None
+
+    @classmethod
+    def embed_texts(cls, texts: Sequence[str]) -> List[List[float]]:
+        client = cls._get_client()
+        if client is None:
+            return []
+        if not texts:
+            return []
+        model = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large")
+        try:
+            response = client.embeddings.create(
+                model=model,
+                input=list(texts),
+            )
+            vectors: List[List[float]] = []
+            for item in getattr(response, "data", []):
+                embedding = getattr(item, "embedding", None)
+                if embedding:
+                    vectors.append(list(embedding))
+            return vectors
+        except Exception as exc:  # pragma: no cover - network errors
+            logger.warning("OpenAI embedding request failed: %s", exc)
+            return []

@@ -14,6 +14,7 @@ from .agent_decision_service import AgentDecisionService
 from .agent_audit_service import AgentAuditService
 from .agent_execution_service import AgentExecutionService
 from .agent_feedback_service import AgentFeedbackService
+from .retrieval_service import RetrievalService
 
 __all__ = [
     "AuthService",
@@ -33,4 +34,5 @@ __all__ = [
     "AgentAuditService",
     "AgentExecutionService",
     "AgentFeedbackService",
+    "RetrievalService",
 ]

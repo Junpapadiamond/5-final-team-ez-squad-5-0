@@ -2,193 +2,61 @@ from __future__ import annotations
 
 import os
 import uuid
-from datetime import datetime, timedelta
+import logging
+import threading
+from concurrent.futures import ThreadPoolExecutor, Future, TimeoutError as FuturesTimeout
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from .. import mongo
 from .agent_orchestrator import AgentOrchestrator
-from .style_profile_service import StyleProfileService
+
+
+logger = logging.getLogger(__name__)
+
+_refresh_executor: Optional[ThreadPoolExecutor] = None
+_refresh_lock = threading.Lock()
+_refresh_inflight: Dict[str, Future] = {}
 
 
 class AgentSuggestionService:
-    """Generates coaching suggestions blending LLM insights with deterministic reminders."""
+    """Generates AI-powered coaching suggestions and caches them for reuse."""
 
     @staticmethod
-    def get_suggestions(user_id: str) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    def get_suggestions(user_id: str) -> Tuple[Dict[str, Any], Optional[str]]:
         try:
             cached = AgentSuggestionService._get_cached_suggestions(user_id)
             if cached:
                 return cached, None
 
-            suggestions: List[Dict[str, Any]] = []
-            llm_cards = AgentOrchestrator.plan_coaching(user_id) or []
-            now = datetime.utcnow().isoformat() + "Z"
+            future = AgentSuggestionService._schedule_async_refresh(user_id)
+            if future is not None:
+                timeout = AgentSuggestionService._llm_sync_timeout()
+                try:
+                    payload = future.result(timeout=timeout)
+                    if payload:
+                        return payload, None
+                except FuturesTimeout:
+                    logger.warning(
+                        "Agent suggestion LLM call exceeded %.1fs for user %s; returning fallback and continuing async",
+                        timeout,
+                        user_id,
+                    )
+                except Exception as exc:  # pragma: no cover - defensive guard
+                    logger.warning(
+                        "Agent suggestion LLM call failed for user %s: %s",
+                        user_id,
+                        exc,
+                    )
 
-            for card in llm_cards:
-                suggestion = {
-                    "id": card.get("id", str(uuid.uuid4())),
-                    "type": card.get("type", "custom"),
-                    "title": card.get("title", "Agent insight"),
-                    "summary": card.get("summary", ""),
-                    "confidence": card.get("confidence"),
-                    "generated_at": now,
-                    "payload": {
-                        "call_to_action": card.get("call_to_action"),
-                        "suggested_message": card.get("suggested_message"),
-                    },
-                    "ai_source": "openai",
-                }
-                suggestions.append(suggestion)
-
-            legacy_cards = AgentSuggestionService._legacy_suggestions(user_id)
-            merged = AgentSuggestionService._merge_suggestions(suggestions, legacy_cards)
-
-            AgentSuggestionService._store_cache(user_id, merged)
-            return merged, None
-        except Exception as exc:  # pragma: no cover - defensive
-            return [], f"Failed to generate suggestions: {str(exc)}"
-
-    @staticmethod
-    def _legacy_suggestions(user_id: str) -> List[Dict[str, Any]]:
-        now = datetime.utcnow()
-        suggestions: List[Dict[str, Any]] = []
-
-        style_profile, _ = StyleProfileService.get_style_profile(user_id, cache_ttl_hours=6)
-        style_summary = (style_profile or {}).get("style_summary")
-        last_message = AgentSuggestionService._get_last_message(user_id)
-        if AgentSuggestionService._needs_connection_ping(last_message, now):
-            suggestions.append(
-                AgentSuggestionService._build_message_prompt(
-                    user_id=user_id,
-                    style_summary=style_summary,
-                    last_message=last_message,
-                    now=now,
-                )
-            )
-
-        daily_prompt = AgentSuggestionService._get_daily_question_prompt(user_id)
-        if daily_prompt:
-            suggestions.append(daily_prompt)
-
-        calendar_prompt = AgentSuggestionService._get_calendar_prompt(user_id, now)
-        if calendar_prompt:
-            suggestions.append(calendar_prompt)
-
-        for item in suggestions:
-            item.setdefault("ai_source", "legacy")
-
-        return suggestions
-
-    @staticmethod
-    def _merge_suggestions(
-        primary: List[Dict[str, Any]],
-        secondary: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
-        seen_types = {item["type"] for item in primary}
-        merged = list(primary)
-
-        for card in secondary:
-            if card["type"] not in seen_types:
-                merged.append(card)
-        return merged
-
-    @staticmethod
-    def _get_last_message(user_id: str) -> Optional[Dict[str, Any]]:
-        return mongo.db.messages.find_one(
-            {
-                "$or": [
-                    {"sender_id": user_id},
-                    {"receiver_id": user_id},
-                ]
-            },
-            sort=[("created_at", -1)],
-        )
-
-    @staticmethod
-    def _needs_connection_ping(last_message: Optional[Dict[str, Any]], now: datetime) -> bool:
-        if not last_message:
-            return True
-
-        created_at = last_message.get("created_at")
-        if isinstance(created_at, datetime):
-            return (now - created_at) > timedelta(hours=18)
-
-        return True
-
-    @staticmethod
-    def _build_message_prompt(
-        *,
-        user_id: str,
-        style_summary: Optional[str],
-        last_message: Optional[Dict[str, Any]],
-        now: datetime,
-    ) -> Dict[str, Any]:
-        tone_hint = style_summary or "Keep it warm and genuine."
-
-        if last_message and last_message.get("content"):
-            recent_snippet = last_message["content"][:120]
-            secondary_text = f'Last exchange: "{recent_snippet}"'
-        else:
-            secondary_text = "No recent messages detected."
-
-        return {
-            "id": str(uuid.uuid4()),
-            "type": "message_draft",
-            "title": "Send a quick note",
-            "summary": "Start a conversation to keep the connection strong.",
-            "confidence": 0.7,
-            "generated_at": now.isoformat() + "Z",
-            "payload": {
-                "tone_hint": tone_hint,
-                "secondary_text": secondary_text,
-            },
-        }
-
-    @staticmethod
-    def _get_daily_question_prompt(user_id: str) -> Optional[Dict[str, Any]]:
-        today = datetime.utcnow().date().isoformat()
-        record = mongo.db.daily_questions.find_one({"user_id": user_id, "date": today})
-
-        if not record or record.get("answered"):
-            return None
-
-        question = record.get("question")
-        if not question:
-            return None
-
-        return {
-            "id": str(uuid.uuid4()),
-            "type": "daily_question",
-            "title": "Answer today’s reflection",
-            "summary": question,
-            "confidence": 0.6,
-            "generated_at": datetime.utcnow().isoformat() + "Z",
-            "payload": {"question": question},
-        }
-
-    @staticmethod
-    def _get_calendar_prompt(user_id: str, now: datetime) -> Optional[Dict[str, Any]]:
-        upcoming = list(
-            mongo.db.events.find(
-                {
-                    "user_id": user_id,
-                    "start_time": {"$gte": now, "$lt": now + timedelta(days=7)},
-                }
-            ).sort("start_time", 1)
-        )
-
-        if upcoming:
-            return None
-
-        return {
-            "id": str(uuid.uuid4()),
-            "type": "calendar",
-            "title": "Plan something together",
-            "summary": "No shared plans in the next week. Consider scheduling a small event.",
-            "confidence": 0.4,
-            "generated_at": now.isoformat() + "Z",
-            "payload": {"suggested_window": "next_7_days"},
-        }
+            fallback_payload = AgentSuggestionService._build_fallback_payload(user_id)
+            if future is not None:
+                fallback_payload.setdefault("metadata", {})
+                fallback_payload["metadata"]["async_refresh"] = True
+            return fallback_payload, None
+        except Exception as exc:  # pragma: no cover - defensive guard
+            logger.exception("Agent suggestion retrieval failed for user %s", user_id)
+            return {"suggestions": [], "metadata": None}, f"Failed to generate suggestions: {str(exc)}"
 
     @staticmethod
     def _cache_collection():
@@ -202,24 +70,227 @@ class AgentSuggestionService:
             return 0
 
     @staticmethod
-    def _get_cached_suggestions(user_id: str) -> Optional[List[Dict[str, Any]]]:
+    def _get_cached_suggestions(user_id: str) -> Optional[Dict[str, Any]]:
         collection = AgentSuggestionService._cache_collection()
         ttl = AgentSuggestionService._cache_ttl_hours()
         if collection is None or ttl <= 0:
             return None
-        cutoff = datetime.utcnow() - timedelta(hours=ttl)
+
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=ttl)
         doc = collection.find_one({"user_id": user_id, "created_at": {"$gte": cutoff}})
-        if doc and isinstance(doc.get("suggestions"), list):
-            return doc["suggestions"]
+        if not doc:
+            return None
+
+        payload = doc.get("payload")
+        if isinstance(payload, dict):
+            return payload
+
+        # Backwards compatibility with legacy cache shape
+        suggestions = doc.get("suggestions")
+        if isinstance(suggestions, list):
+            return {"suggestions": suggestions, "metadata": doc.get("metadata")}
+
         return None
 
     @staticmethod
-    def _store_cache(user_id: str, suggestions: List[Dict[str, Any]]) -> None:
+    def _store_cache(user_id: str, payload: Dict[str, Any]) -> None:
         collection = AgentSuggestionService._cache_collection()
         if collection is None:
             return
+
         collection.update_one(
             {"user_id": user_id},
-            {"$set": {"suggestions": suggestions, "created_at": datetime.utcnow()}},
+            {"$set": {"payload": payload, "created_at": datetime.now(timezone.utc)}},
             upsert=True,
         )
+
+    @staticmethod
+    def _build_fallback_payload(user_id: str) -> Dict[str, Any]:
+        context = AgentOrchestrator.build_context(user_id)
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        suggestions: List[Dict[str, Any]] = []
+
+        daily_question = (context or {}).get("daily_question") or {}
+        if daily_question and not daily_question.get("answered"):
+            question = daily_question.get("question") or "today's daily question"
+            suggestions.append(
+                {
+                    "id": f"{user_id}-fallback-daily",
+                    "type": "daily_question",
+                    "title": "Check in on today's reflection",
+                    "summary": "Answer the daily prompt and share it with your partner to keep the conversation flowing.",
+                    "confidence": 0.55,
+                    "generated_at": now,
+                    "payload": {
+                        "call_to_action": f"Take a minute to answer {question}.",
+                        "suggested_message": "Just answered today's question - want to trade thoughts later tonight?",
+                    },
+                    "ai_source": "logic",
+                    "llm_metadata": None,
+                }
+            )
+
+        recent_messages = (context or {}).get("recent_messages") or []
+        if recent_messages:
+            latest = recent_messages[0]
+            preview = (latest or {}).get("content") or ""
+            if len(preview) > 60:
+                preview = preview[:57] + "..."
+            preview = preview or "their last note"
+            suggestions.append(
+                {
+                    "id": f"{user_id}-fallback-reply",
+                    "type": "message_draft",
+                    "title": "Send a quick reply",
+                    "summary": "Follow up on the latest note so the conversation stays active.",
+                    "confidence": 0.5,
+                    "generated_at": now,
+                    "payload": {
+                        "call_to_action": "Send a warm reply that references their latest note.",
+                        "suggested_message": f"Loved your message about \"{preview}\" - want to chat more about it later?",
+                    },
+                    "ai_source": "logic",
+                    "llm_metadata": None,
+                }
+            )
+
+        upcoming_events = (context or {}).get("upcoming_events") or []
+        if not upcoming_events:
+            suggestions.append(
+                {
+                    "id": f"{user_id}-fallback-calendar",
+                    "type": "calendar",
+                    "title": "Plan a shared moment",
+                    "summary": "Add something small to the calendar so you both have a moment to look forward to.",
+                    "confidence": 0.45,
+                    "generated_at": now,
+                    "payload": {
+                        "call_to_action": "Block a short check-in or date on the calendar for this week.",
+                        "suggested_message": "Let's pencil in a 20-minute catch-up this week - any evening work for you?",
+                    },
+                    "ai_source": "logic",
+                    "llm_metadata": None,
+                }
+            )
+
+        if not suggestions:
+            suggestions.append(
+                {
+                    "id": f"{user_id}-fallback-default",
+                    "type": "message_draft",
+                    "title": "Share a win",
+                    "summary": "Send an appreciation note to keep momentum.",
+                    "confidence": 0.4,
+                    "generated_at": now,
+                    "payload": {
+                        "call_to_action": "Send a short message thanking them for something this week.",
+                        "suggested_message": "Wanted to say thanks for being there today - it really meant a lot <3",
+                    },
+                    "ai_source": "logic",
+                    "llm_metadata": None,
+                }
+            )
+
+        metadata = {
+            "model": None,
+            "generated_at": now,
+            "strategy": "deterministic-fallback",
+            "explanation": "Returning cached heuristics while AI refresh completes.",
+        }
+        return {"suggestions": suggestions, "metadata": metadata}
+
+    @staticmethod
+    def _llm_sync_timeout() -> float:
+        try:
+            return max(0.5, float(os.getenv("AGENT_COACHING_SYNC_TIMEOUT", "2.5")))
+        except ValueError:
+            return 2.5
+
+    @staticmethod
+    def _schedule_async_refresh(user_id: str) -> Optional[Future]:
+        executor = AgentSuggestionService._get_executor()
+        if executor is None:
+            return None
+
+        with _refresh_lock:
+            future = _refresh_inflight.get(user_id)
+            if future is not None and not future.done():
+                return future
+
+            def _task():
+                try:
+                    package = AgentOrchestrator.plan_coaching(user_id) or {}
+                    if not package:
+                        return None
+                    payload = AgentSuggestionService._format_llm_payload(user_id, package)
+                    AgentSuggestionService._store_cache(user_id, payload)
+                    logger.info("Agent suggestions refreshed via LLM for user %s", user_id)
+                    return payload
+                except Exception as exc:  # pragma: no cover - defensive guard
+                    logger.warning("Async agent suggestion refresh failed for user %s: %s", user_id, exc)
+                    return None
+                finally:
+                    with _refresh_lock:
+                        _refresh_inflight.pop(user_id, None)
+
+            future = executor.submit(_task)
+            _refresh_inflight[user_id] = future
+            return future
+
+    @staticmethod
+    def _get_executor() -> Optional[ThreadPoolExecutor]:
+        global _refresh_executor
+        if _refresh_executor is not None:
+            return _refresh_executor
+        try:
+            workers = max(1, int(os.getenv("AGENT_SUGGESTION_WORKERS", "2")))
+        except ValueError:
+            workers = 2
+        _refresh_executor = ThreadPoolExecutor(
+            max_workers=workers,
+            thread_name_prefix="agent-suggestion",
+        )
+        return _refresh_executor
+
+    @staticmethod
+    def _format_llm_payload(user_id: str, package: Dict[str, Any]) -> Dict[str, Any]:
+        cards = package.get("cards") or []
+        generated_at = package.get("generated_at") or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        metadata = {
+            "model": package.get("model"),
+            "generated_at": generated_at,
+            "strategy": package.get("strategy"),
+            "explanation": package.get("explanation"),
+        }
+        if package.get("retrieval_sources"):
+            metadata["retrieval_sources"] = package.get("retrieval_sources")
+
+        suggestions: List[Dict[str, Any]] = []
+        for card in cards:
+            if not isinstance(card, dict):
+                continue
+            suggestion_id = card.get("id") or f"{user_id}-suggestion-{uuid.uuid4()}"
+            payload: Dict[str, Any] = {}
+            for key in ("call_to_action", "suggested_message"):
+                value = card.get(key)
+                if value:
+                    payload[key] = str(value)
+            card_metadata = dict(metadata)
+            suggestions.append(
+                {
+                    "id": suggestion_id,
+                    "type": card.get("type", "custom"),
+                    "title": card.get("title", "Agent insight"),
+                    "summary": card.get("summary", ""),
+                    "confidence": card.get("confidence"),
+                    "generated_at": generated_at,
+                    "payload": payload,
+                    "ai_source": "openai",
+                    "llm_metadata": card_metadata,
+                }
+            )
+
+        return {"suggestions": suggestions, "metadata": metadata}
+
+
+__all__ = ["AgentSuggestionService"]

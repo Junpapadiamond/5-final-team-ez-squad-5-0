@@ -7,6 +7,7 @@ from bson import ObjectId
 
 from .. import mongo
 from .agent_llm_client import AgentLLMClient
+from .retrieval_service import RetrievalService
 from .style_profile_service import StyleProfileService
 
 
@@ -26,19 +27,55 @@ class AgentOrchestrator:
     @staticmethod
     def analyze_tone(user_id: str, message: str) -> Optional[Dict[str, Any]]:
         context = AgentOrchestrator.build_context(user_id)
-        return AgentLLMClient.analyze_tone(message, context)
+        retrieval = RetrievalService.fetch_context(
+            user_id=user_id,
+            intents=("tone_analysis",),
+            query_text=message,
+        )
+        return AgentLLMClient.analyze_tone(message, context, retrieval)
 
     @staticmethod
-    def plan_coaching(user_id: str) -> Optional[List[Dict[str, Any]]]:
+    def plan_coaching(user_id: str) -> Optional[Dict[str, Any]]:
         context = AgentOrchestrator.build_context(user_id)
-        cards = AgentLLMClient.plan_coaching(context)
-        if cards is None:
+        retrieval = RetrievalService.fetch_context(
+            user_id=user_id,
+            intents=("coaching",),
+            query_text=AgentOrchestrator._coaching_query_text(context),
+        )
+        package = AgentLLMClient.plan_coaching(context, retrieval)
+        if not package:
             return None
-        # Ensure each card has an id; fallback to generated timestamp if missing.
         now = datetime.utcnow().isoformat() + "Z"
+        cards = package.get("cards") or []
         for idx, card in enumerate(cards):
             card.setdefault("id", f"{user_id}-llm-{idx}-{now}")
-        return list(cards)
+        package["cards"] = list(cards)
+        package["generated_at"] = now
+        return package
+
+    @staticmethod
+    def plan_actions(
+        user_id: str,
+        event: Dict[str, Any],
+        *,
+        base_context: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        context = base_context or AgentOrchestrator.build_context(user_id)
+        retrieval = RetrievalService.fetch_context(
+            user_id=user_id,
+            intents=(event.get("scenario") or event.get("event_type") or "actions",),
+            query_text=AgentOrchestrator._action_query_text(event, context),
+        )
+        package = AgentLLMClient.plan_actions(event, context, retrieval)
+        if not package:
+            return None
+        package["context_digest"] = {
+            "recent_messages": context.get("recent_messages", [])[:2],
+            "upcoming_events": context.get("upcoming_events", [])[:2],
+            "style_summary": (context.get("style_profile") or {}).get("style_summary"),
+        }
+        package["generated_at"] = datetime.utcnow().isoformat() + "Z"
+        return package
 
     @staticmethod
     def style_summary_from_llm(user_id: str, samples: List[str]) -> Optional[Dict[str, Any]]:
@@ -46,6 +83,36 @@ class AgentOrchestrator:
             return None
         context = {"message_samples": samples}
         return AgentLLMClient.summarize_style(context)
+
+    @staticmethod
+    def _coaching_query_text(context: Dict[str, Any]) -> str:
+        sections: List[str] = []
+        dq = context.get("daily_question") or {}
+        if dq.get("question"):
+            sections.append(f"Daily question: {dq['question']}")
+        recent = context.get("recent_messages") or []
+        if recent:
+            sections.append("Recent messages: " + " | ".join(item.get("content", "") for item in recent))
+        events = context.get("upcoming_events") or []
+        if events:
+            sections.append("Upcoming events: " + " | ".join(item.get("title", "") for item in events))
+        style = (context.get("style_profile") or {}).get("style_summary")
+        if style:
+            sections.append(f"Style summary: {style}")
+        return " ".join(sections)
+
+    @staticmethod
+    def _action_query_text(event: Dict[str, Any], context: Dict[str, Any]) -> str:
+        payload = event.get("payload") or {}
+        parts = [
+            f"Event type: {event.get('event_type')}",
+            f"Scenario: {event.get('scenario')}",
+            f"Payload: {payload}",
+        ]
+        recent = context.get("recent_messages") or []
+        if recent:
+            parts.append("Recent messages: " + " | ".join(item.get("content", "") for item in recent))
+        return " ".join(str(part) for part in parts if part)
 
     @staticmethod
     def _partner_status(user_id: str) -> str:

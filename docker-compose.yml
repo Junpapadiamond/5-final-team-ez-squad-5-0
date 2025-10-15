@@ -52,6 +52,27 @@ services:
     networks:
       - app-network
 
+  # Agent Activity Worker Container
+  agent-worker:
+    build:
+      context: ./api-container
+      dockerfile: Dockerfile.worker
+    container_name: together-agent-worker
+    restart: always
+    environment:
+      - MONGO_URI=mongodb://db:27017/together
+      - AGENT_ACTIVITY_POLL_INTERVAL=60
+      - AGENT_CALENDAR_GAP_CHECK_HOURS=6
+      - AGENT_DAILY_MISS_THRESHOLD_HOURS=24
+    command: ["python", "workers/agent_activity_worker.py"]
+    volumes:
+      - ./api-container:/app
+    depends_on:
+      - db
+      - api
+    networks:
+      - app-network
+
   # React Frontend Container
   frontend:
     build: ./frontend

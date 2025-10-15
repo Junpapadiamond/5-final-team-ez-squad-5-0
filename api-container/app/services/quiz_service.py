@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from bson import ObjectId
 
 from .. import mongo
+from .agent_activity_service import AgentActivityService
 
 
 class QuizService:
@@ -399,6 +400,8 @@ class QuizService:
                 "updated_at": datetime.utcnow(),
             }
 
+            completion_payload: Optional[Dict[str, Any]] = None
+
             if completed and total_questions:
                 score = int(round((matches / total_questions) * 100))
                 update_fields.update(
@@ -412,6 +415,12 @@ class QuizService:
                         },
                     }
                 )
+                completion_payload = {
+                    "session_id": str(session_obj_id),
+                    "score": score,
+                    "matches": matches,
+                    "total": total_questions,
+                }
 
             mongo.db.quiz_sessions.update_one(
                 {"_id": session_obj_id},
@@ -421,6 +430,22 @@ class QuizService:
             updated_session = mongo.db.quiz_sessions.find_one({"_id": session_obj_id})
             payload = QuizService._serialize_session(updated_session, user_id)
             payload["completed"] = payload.get("status") == "completed"
+
+            if completion_payload and payload["completed"]:
+                completed_at = updated_session.get("completed_at") or datetime.utcnow()
+                for participant in user_ids:
+                    try:
+                        AgentActivityService.record_event(
+                            user_id=participant,
+                            event_type="quiz_completed",
+                            source="quiz_service",
+                            scenario="quiz_follow_up",
+                            payload=completion_payload,
+                            dedupe_key=f"quiz:{completion_payload['session_id']}:{participant}",
+                            occurred_at=completed_at if isinstance(completed_at, datetime) else datetime.utcnow(),
+                        )
+                    except Exception:
+                        pass
 
             return {"session": payload}, None
 

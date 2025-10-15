@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import AuthLayout from '@/components/layout/AuthLayout';
 import { useAuthStore } from '@/lib/auth';
-import apiClient from '@/lib/api';
+import apiClient, { AgentQueueAction } from '@/lib/api';
 import {
   Sparkles,
   RefreshCcw,
@@ -15,6 +15,7 @@ import {
   AlertCircle,
   PlayCircle,
   CheckCircle2,
+  Loader2,
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
@@ -38,6 +39,15 @@ interface SuggestionPayload {
   suggested_window?: string | null;
 }
 
+interface LlmMetadata {
+  model?: string | null;
+  generated_at?: string | null;
+  strategy?: string | null;
+  explanation?: string | null;
+  has_raw?: boolean;
+  [key: string]: unknown;
+}
+
 interface SuggestionCard {
   id: string;
   type: string;
@@ -47,6 +57,7 @@ interface SuggestionCard {
   generated_at?: string;
   payload?: SuggestionPayload | null;
   ai_source?: string;
+  llm_metadata?: LlmMetadata | null;
 }
 
 interface AgentAnalysisMetrics {
@@ -73,6 +84,7 @@ interface AgentAnalysisResult {
   suggested_reply?: string | null;
   warnings?: string[];
   cached?: boolean;
+  llm_metadata?: LlmMetadata | null;
 }
 
 const iconForType: Record<string, JSX.Element> = {
@@ -85,7 +97,8 @@ export default function AgentPage() {
   const { user } = useAuthStore();
   const [styleProfile, setStyleProfile] = useState<StyleProfile | null>(null);
   const [suggestions, setSuggestions] = useState<SuggestionCard[]>([]);
-  const [automationQueue, setAutomationQueue] = useState<any[]>([]);
+  const [automationQueue, setAutomationQueue] = useState<AgentQueueAction[]>([]);
+  const [suggestionMeta, setSuggestionMeta] = useState<LlmMetadata | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
@@ -93,9 +106,15 @@ export default function AgentPage() {
   const [analysis, setAnalysis] = useState<AgentAnalysisResult | null>(null);
   const [analysisError, setAnalysisError] = useState('');
   const [analyzing, setAnalyzing] = useState(false);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const [executingActionId, setExecutingActionId] = useState<string | null>(null);
+  const [acknowledgingActionId, setAcknowledgingActionId] = useState<string | null>(null);
 
   const loadData = async (force = false) => {
     setRefreshing(true);
+    if (!loading) {
+      setSuggestionsLoading(true);
+    }
     setError('');
     try {
       const [profile, actionData] = await Promise.all([
@@ -104,12 +123,14 @@ export default function AgentPage() {
       ]);
       setStyleProfile(profile);
       setSuggestions(actionData.suggestions);
-      setAutomationQueue(actionData.automation_queue);
+      setAutomationQueue((actionData.automation_queue || []) as AgentQueueAction[]);
+      setSuggestionMeta(actionData.llm || null);
     } catch (err: any) {
       setError(err.response?.data?.message || err.message || 'Failed to load agent data');
     } finally {
       setLoading(false);
       setRefreshing(false);
+      setSuggestionsLoading(false);
     }
   };
   const handleAnalyze = async (event: FormEvent<HTMLFormElement>) => {
@@ -134,20 +155,26 @@ export default function AgentPage() {
   };
 
   const handleExecuteAction = async (actionId: string) => {
+    setExecutingActionId(actionId);
     try {
       await apiClient.executeAgentAction(actionId);
       await loadData(true);
     } catch (err: any) {
       setError(err.response?.data?.message || err.message || 'Failed to execute agent action');
+    } finally {
+      setExecutingActionId(null);
     }
   };
 
   const handleAcknowledgeAction = async (actionId: string) => {
+    setAcknowledgingActionId(actionId);
     try {
       await apiClient.submitAgentFeedback(actionId, { status: 'acknowledged' });
       await loadData(true);
     } catch (err: any) {
       setError(err.response?.data?.message || err.message || 'Failed to acknowledge agent action');
+    } finally {
+      setAcknowledgingActionId(null);
     }
   };
 
@@ -296,15 +323,31 @@ export default function AgentPage() {
           <p className="text-sm text-gray-500">No automated actions awaiting approval.</p>
         ) : (
           <div className="space-y-3">
-            {automationQueue.map((item) => (
-              <div key={item._id} className="border rounded-lg p-4 space-y-2">
+            {automationQueue.map((item) => {
+              const isExecuting = executingActionId === item._id;
+              const isAcknowledging = acknowledgingActionId === item._id;
+              return (
+                <div key={item._id} className="border rounded-lg p-4 space-y-2">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-semibold text-gray-800">{item.action_type}</p>
+                    <p className="text-sm font-semibold text-gray-800">
+                      {item.title || item.summary || item.action_type || 'Pending action'}
+                    </p>
                     <p className="text-xs text-gray-500">Workflow: {item.workflow}</p>
                   </div>
                   <div className="flex items-center space-x-2">
-                    <span className="text-xs text-gray-500">{Math.round((item.confidence || 0) * 100)}% confidence</span>
+                    {typeof item.confidence === 'number' && (
+                      <span className="text-xs text-gray-500">{Math.round(item.confidence * 100)}% confidence</span>
+                    )}
+                    {item.ai_source && (
+                      <span
+                        className={`inline-flex items-center px-2 py-0.5 text-xs font-semibold rounded-full ${
+                          item.ai_source === 'openai' ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-600'
+                        }`}
+                      >
+                        {item.ai_source === 'openai' ? 'LLM' : item.ai_source}
+                      </span>
+                    )}
                     {item.requires_approval && (
                       <span className="inline-flex items-center px-2 py-0.5 text-xs font-semibold rounded-full bg-amber-100 text-amber-700">
                         Needs approval
@@ -312,33 +355,49 @@ export default function AgentPage() {
                     )}
                   </div>
                 </div>
-                {item.payload?.question && (
-                  <p className="text-sm text-gray-600">Question: {item.payload.question}</p>
+                {item.llm_metadata?.model && (
+                  <p className="text-xs text-indigo-600">Model: {item.llm_metadata.model}</p>
+                )}
+                {item.payload?.call_to_action && (
+                  <p className="text-sm text-gray-600">Next step: {item.payload.call_to_action}</p>
                 )}
                 {item.payload?.suggested_message && (
-                  <p className="text-sm text-gray-600">Suggested: {item.payload.suggested_message}</p>
+                  <p className="text-sm text-gray-600">Suggested message: {item.payload.suggested_message}</p>
                 )}
-                {item.payload?.idea && (
-                  <p className="text-sm text-gray-600">Idea: {item.payload.idea}</p>
+                {item.rationale && (
+                  <p className="text-xs text-gray-500">Reasoning: {item.rationale}</p>
                 )}
                 <div className="flex items-center space-x-3">
                   <button
                     type="button"
                     onClick={() => handleExecuteAction(item._id)}
-                    className="inline-flex items-center px-3 py-1 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700"
+                    disabled={isExecuting || refreshing}
+                    className="inline-flex items-center px-3 py-1 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed"
                   >
-                    <PlayCircle className="w-4 h-4 mr-1" /> Execute
+                    {isExecuting ? (
+                      <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                    ) : (
+                      <PlayCircle className="w-4 h-4 mr-1" />
+                    )}
+                    {isExecuting ? 'Executing...' : 'Execute'}
                   </button>
                   <button
                     type="button"
                     onClick={() => handleAcknowledgeAction(item._id)}
-                    className="inline-flex items-center px-3 py-1 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200"
+                    disabled={isAcknowledging || refreshing}
+                    className="inline-flex items-center px-3 py-1 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 disabled:opacity-60 disabled:cursor-not-allowed"
                   >
-                    <CheckCircle2 className="w-4 h-4 mr-1" /> Acknowledge
+                    {isAcknowledging ? (
+                      <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="w-4 h-4 mr-1" />
+                    )}
+                    {isAcknowledging ? 'Saving...' : 'Acknowledge'}
                   </button>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -346,6 +405,17 @@ export default function AgentPage() {
   };
 
   const renderSuggestions = () => {
+    if (suggestionsLoading && !loading) {
+      return (
+        <div className="bg-white border rounded-lg p-6 shadow-sm flex items-center justify-center">
+          <div className="flex items-center space-x-3 text-sm text-indigo-700">
+            <Loader2 className="w-5 h-5 animate-spin text-indigo-500" />
+            <span>Fetching the latest Agent insights...</span>
+          </div>
+        </div>
+      );
+    }
+
     if (suggestions.length === 0) {
       return (
         <div className="bg-white border rounded-lg p-6 shadow-sm text-center">
@@ -356,67 +426,79 @@ export default function AgentPage() {
     }
 
     return (
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {suggestions.map((suggestion) => (
-          <div key={suggestion.id} className="bg-white border rounded-lg p-4 shadow-sm space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-2">
-                {iconForType[suggestion.type] ?? <Sparkles className="w-5 h-5 text-gray-500" />}
-                <h3 className="text-base font-semibold text-gray-900">{suggestion.title}</h3>
-              </div>
-              <div className="flex items-center space-x-2">
-                {typeof suggestion.confidence === 'number' && (
-                  <span className="text-xs text-gray-500">{Math.round(suggestion.confidence * 100)}% match</span>
-                )}
-                {suggestion.ai_source && (
-                  <span
-                    className={`px-2 py-0.5 rounded-full text-[11px] font-semibold uppercase tracking-wide ${
-                      suggestion.ai_source === 'openai'
-                        ? 'bg-indigo-100 text-indigo-700'
-                        : 'bg-gray-100 text-gray-600'
-                    }`}
-                  >
-                    {suggestion.ai_source === 'openai' ? 'LLM' : 'Logic'}
-                  </span>
-                )}
-              </div>
+      <div className="space-y-4">
+        {suggestionMeta && (suggestionMeta.model || suggestionMeta.strategy) && (
+          <div className="border border-indigo-100 rounded-lg p-4 bg-indigo-50/40 flex items-center justify-between text-sm text-indigo-900">
+            <div>
+              <p className="font-semibold">LLM context</p>
+              {suggestionMeta.strategy && <p className="text-xs text-indigo-700">{suggestionMeta.strategy}</p>}
+              {suggestionMeta.explanation && (
+                <p className="text-xs text-indigo-600 mt-1">Reasoning: {suggestionMeta.explanation}</p>
+              )}
             </div>
-            <p className="text-sm text-gray-700">{suggestion.summary}</p>
-            {suggestion.payload?.secondary_text && (
-              <p className="text-xs text-gray-500">
-                {suggestion.payload.secondary_text.length > 160
-                  ? `${suggestion.payload.secondary_text.slice(0, 160)}…`
-                  : suggestion.payload.secondary_text}
-              </p>
-            )}
-            {suggestion.payload?.call_to_action && (
-              <div className="border border-blue-100 rounded-md p-3 bg-blue-50/40">
-                <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide mb-1">
-                  Next Step
-                </p>
-                <p className="text-sm text-blue-900">{suggestion.payload.call_to_action}</p>
-              </div>
-            )}
-            {suggestion.payload?.suggested_message && (
-              <div className="border border-pink-100 rounded-md p-3 bg-pink-50/40">
-                <p className="text-xs font-semibold text-pink-700 uppercase tracking-wide mb-1">
-                  Suggested message
-                </p>
-                <p className="text-sm text-pink-900 leading-relaxed">
-                  {suggestion.payload.suggested_message}
-                </p>
-              </div>
-            )}
-            {suggestion.generated_at && (
-              <p className="text-xs text-gray-400">
-                Generated{' '}
-                {formatDistanceToNow(new Date(suggestion.generated_at), {
-                  addSuffix: true,
-                })}
-              </p>
+            {suggestionMeta.model && (
+              <span className="inline-flex items-center px-3 py-1 text-xs font-semibold rounded-full bg-indigo-200 text-indigo-800">
+                Model: {suggestionMeta.model}
+              </span>
             )}
           </div>
-        ))}
+        )}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {suggestions.map((suggestion) => (
+            <div key={suggestion.id} className="bg-white border rounded-lg p-4 shadow-sm space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  {iconForType[suggestion.type] ?? <Sparkles className="w-5 h-5 text-gray-500" />}
+                  <h3 className="text-base font-semibold text-gray-900">{suggestion.title}</h3>
+                </div>
+                <div className="flex items-center space-x-2">
+                  {typeof suggestion.confidence === 'number' && (
+                    <span className="text-xs text-gray-500">{Math.round(suggestion.confidence * 100)}% match</span>
+                  )}
+                  {(suggestion.llm_metadata?.model || suggestionMeta?.model) && (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold uppercase tracking-wide bg-indigo-100 text-indigo-700">
+                      {suggestion.llm_metadata?.model || suggestionMeta?.model}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <p className="text-sm text-gray-700">{suggestion.summary}</p>
+              {suggestion.payload?.secondary_text && (
+                <p className="text-xs text-gray-500">
+                  {suggestion.payload.secondary_text.length > 160
+                    ? `${suggestion.payload.secondary_text.slice(0, 160)}…`
+                    : suggestion.payload.secondary_text}
+                </p>
+              )}
+              {suggestion.payload?.call_to_action && (
+                <div className="border border-blue-100 rounded-md p-3 bg-blue-50/40">
+                  <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide mb-1">
+                    Next Step
+                  </p>
+                  <p className="text-sm text-blue-900">{suggestion.payload.call_to_action}</p>
+                </div>
+              )}
+              {suggestion.payload?.suggested_message && (
+                <div className="border border-pink-100 rounded-md p-3 bg-pink-50/40">
+                  <p className="text-xs font-semibold text-pink-700 uppercase tracking-wide mb-1">
+                    Suggested message
+                  </p>
+                  <p className="text-sm text-pink-900 leading-relaxed">
+                    {suggestion.payload.suggested_message}
+                  </p>
+                </div>
+              )}
+              {suggestion.generated_at && (
+                <p className="text-xs text-gray-400">
+                  Generated{' '}
+                  {formatDistanceToNow(new Date(suggestion.generated_at), {
+                    addSuffix: true,
+                  })}
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
       </div>
     );
   };
@@ -441,14 +523,25 @@ export default function AgentPage() {
               Let the Together Agent help you stay connected{user?.name ? `, ${user.name}` : ''}.
             </p>
           </div>
-          <button
-            onClick={() => loadData(true)}
-            disabled={refreshing}
-            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
-          >
-            <RefreshCcw className="w-4 h-4 mr-2" />
-            {refreshing ? 'Refreshing...' : 'Refresh'}
-          </button>
+          <div className="flex items-center space-x-3">
+            {suggestionMeta?.model && (
+              <span className="inline-flex items-center px-3 py-1 text-xs font-semibold rounded-full bg-indigo-100 text-indigo-700">
+                Model: {suggestionMeta.model}
+              </span>
+            )}
+            <button
+              onClick={() => loadData(true)}
+              disabled={refreshing}
+              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
+            >
+              {refreshing ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <RefreshCcw className="w-4 h-4 mr-2" />
+              )}
+              {refreshing ? 'Refreshing...' : 'Refresh'}
+            </button>
+          </div>
         </div>
 
         {error && (
@@ -464,17 +557,14 @@ export default function AgentPage() {
             <div>
               <h2 className="text-lg font-semibold text-gray-900">Tone Analyzer</h2>
               <p className="text-sm text-gray-600">
-                Paste what you plan to send; the agent keeps your vibe, flags tone, and offers a gentle next move you can build on.
+                Paste what you plan to send; the agent blends quick metrics with model insight so you can tweak in seconds.
               </p>
             </div>
-            <div className="flex items-center space-x-2">
-              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-600">
-                Logic
+            {analysis?.llm_metadata?.model && (
+              <span className="inline-flex items-center px-3 py-1 text-xs font-semibold rounded-full bg-indigo-100 text-indigo-700">
+                Model: {analysis.llm_metadata.model}
               </span>
-              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-50 text-indigo-600">
-                OpenAI
-              </span>
-            </div>
+            )}
           </div>
 
           <form onSubmit={handleAnalyze} className="space-y-3">
@@ -520,7 +610,7 @@ export default function AgentPage() {
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center space-x-2">
                     <Gauge className="w-4 h-4 text-blue-600" />
-                    <h3 className="text-sm font-semibold text-gray-800">Together Agent Logic</h3>
+                    <h3 className="text-sm font-semibold text-gray-800">Tone snapshot</h3>
                   </div>
                   {sentimentBadge}
                 </div>
@@ -530,10 +620,12 @@ export default function AgentPage() {
                     className={`px-2 py-0.5 rounded-full ${
                       analysis.ai_source === 'openai'
                         ? 'bg-indigo-100 text-indigo-700'
-                        : 'bg-gray-100 text-gray-600'
+                        : 'bg-amber-100 text-amber-700'
                     }`}
                   >
-                    {analysis.ai_source === 'openai' ? 'LLM powered' : 'Logic fallback'}
+                    {analysis.ai_source === 'openai'
+                      ? analysis.llm_metadata?.model || 'llm'
+                      : 'offline heuristics'}
                   </span>
                 </div>
                 <ul className="text-xs text-gray-600 space-y-1">
@@ -566,6 +658,11 @@ export default function AgentPage() {
                     </li>
                   ) : null}
                 </ul>
+                {analysis.ai_source !== 'openai' && (
+                  <p className="text-xs text-amber-600 mt-2">
+                    Model unavailable right now; showing cached heuristics instead.
+                  </p>
+                )}
               </div>
 
               <div className="border border-gray-100 rounded-lg p-4">
@@ -593,11 +690,13 @@ export default function AgentPage() {
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center space-x-2">
                     <Sparkles className="w-4 h-4 text-indigo-600" />
-                    <h3 className="text-sm font-semibold text-indigo-700">OpenAI Tone Feedback</h3>
+                    <h3 className="text-sm font-semibold text-indigo-700">Model guidance</h3>
                   </div>
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold uppercase tracking-wide bg-indigo-100 text-indigo-700">
-                    OpenAI
-                  </span>
+                  {analysis.llm_metadata?.model && (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold uppercase tracking-wide bg-indigo-100 text-indigo-700">
+                      {analysis.llm_metadata.model}
+                    </span>
+                  )}
                 </div>
                 <p className="text-sm text-indigo-900 leading-relaxed">
                   {analysis.llm_feedback

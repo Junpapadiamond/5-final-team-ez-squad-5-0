@@ -13,6 +13,14 @@ class Config:
     AGENT_TONE_CACHE_HOURS = os.environ.get("AGENT_TONE_CACHE_HOURS", "3")
     AGENT_COACHING_CACHE_HOURS = os.environ.get("AGENT_COACHING_CACHE_HOURS", "6")
     INTERNAL_SERVICE_TOKEN = os.environ.get("INTERNAL_SERVICE_TOKEN", "dev-internal-token")
+    RAG_FEATURE_FLAG = os.environ.get("RAG_FEATURE_FLAG", "0")
+    RAG_EMBEDDING_COLLECTION = os.environ.get("RAG_EMBEDDING_COLLECTION", "agent_embeddings")
+    RAG_PLAYBOOK_COLLECTION = os.environ.get("RAG_PLAYBOOK_COLLECTION", "agent_playbooks")
+    RAG_VECTOR_BACKEND = os.environ.get("RAG_VECTOR_BACKEND", "atlas")
+    RAG_TOP_K = int(os.environ.get("RAG_TOP_K", "5"))
+    RAG_REDIS_TTL_SECONDS = int(os.environ.get("RAG_REDIS_TTL_SECONDS", "600"))
+    REDIS_URL = os.environ.get("REDIS_URL")
+    OPENAI_EMBEDDING_MODEL = os.environ.get("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large")
 
 
 class DevelopmentConfig(Config):

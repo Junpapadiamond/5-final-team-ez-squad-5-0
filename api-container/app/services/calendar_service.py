@@ -1,7 +1,9 @@
 from datetime import datetime
 from typing import List, Tuple, Optional, Dict, Any
 from bson import ObjectId
+
 from .. import mongo
+from .agent_activity_service import AgentActivityService
 
 
 class CalendarService:
@@ -137,6 +139,37 @@ class CalendarService:
 
             result = mongo.db.events.insert_one(event_doc)
             event_doc["_id"] = str(result.inserted_id)
+
+            partner_id = user.get("partner_id") if user.get("partner_status") == "connected" else None
+
+            try:
+                payload = {
+                    "event_id": event_doc["_id"],
+                    "title": title,
+                    "date": date_str,
+                    "time": time_str,
+                }
+                AgentActivityService.record_event(
+                    user_id=user_id,
+                    event_type="calendar_event_created",
+                    source="calendar_service",
+                    scenario="anniversary_planning",
+                    payload=payload,
+                    dedupe_key=f"calendar-event:{event_doc['_id']}",
+                    occurred_at=event_doc["created_at"],
+                )
+                if partner_id:
+                    AgentActivityService.record_event(
+                        user_id=partner_id,
+                        event_type="partner_calendar_event_created",
+                        source="calendar_service",
+                        scenario="anniversary_planning",
+                        payload={**payload, "creator_id": user_id},
+                        dedupe_key=f"calendar-event:{event_doc['_id']}:partner:{partner_id}",
+                        occurred_at=event_doc["created_at"],
+                    )
+            except Exception:
+                pass
 
             return {
                 "message": "Event created successfully",

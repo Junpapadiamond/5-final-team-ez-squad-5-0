@@ -46,6 +46,7 @@ class AgentActivityService:
         since: Optional[datetime] = None,
         scenario: Optional[str] = None,
         include_processed: bool = False,
+        user_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         store = AgentActivityService._store()
         return store.fetch_recent(
@@ -53,6 +54,7 @@ class AgentActivityService:
             since=since,
             scenario=scenario,
             include_processed=include_processed,
+            user_id=user_id,
         )
 
     @staticmethod

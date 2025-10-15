@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import time
 from datetime import datetime
 from typing import Any, Dict, Optional, Tuple
 
@@ -7,6 +9,11 @@ from .agent_action_queue_service import AgentActionQueueService
 from .agent_audit_service import AgentAuditService
 from .calendar_service import CalendarService
 from .messages_service import MessagesService
+from .agent_orchestrator import AgentOrchestrator
+from .agent_llm_client import AgentLLMClient
+
+
+logger = logging.getLogger(__name__)
 
 
 class AgentExecutionService:
@@ -66,15 +73,30 @@ class AgentExecutionService:
                     else:
                         message = "Send a warm reply to keep the conversation going."
 
-            result, error = MessagesService.send_message(user_id, message)
+            refined_message, llm_metadata = AgentExecutionService._refine_message(user_id, message)
+            result, error = MessagesService.send_message(user_id, refined_message)
             status = "executed" if not error else "failed"
-            AgentActionQueueService.update_status([action_id], status=status, metadata={**metadata, "result": result, "error": error})
+            AgentActionQueueService.update_status(
+                [action_id],
+                status=status,
+                metadata={
+                    **metadata,
+                    "result": result,
+                    "error": error,
+                    "llm_metadata": llm_metadata,
+                    "refined_message_preview": refined_message[:200],
+                },
+            )
             AgentAuditService.log(
                 user_id=user_id,
                 action_id=action_id,
                 action_type=action_type,
                 status=status,
-                metadata={**metadata, "message_preview": message[:160]},
+                metadata={
+                    **metadata,
+                    "message_preview": refined_message[:160],
+                    "llm_metadata": llm_metadata,
+                },
             )
             return result, error
 
@@ -104,3 +126,37 @@ class AgentExecutionService:
             return result, error
 
         return None, f"Unsupported action type: {action_type}"
+
+    @staticmethod
+    def _refine_message(user_id: str, message: str) -> Tuple[str, Dict[str, Any]]:
+        start = time.perf_counter()
+        context = AgentOrchestrator.build_context(user_id)
+        llm_payload = AgentLLMClient.analyze_tone(message, context)
+        duration = time.perf_counter() - start
+
+        metadata: Dict[str, Any] = {
+            "duration_seconds": round(duration, 3),
+            "refined": False,
+        }
+
+        if duration > 3:
+            logger.warning(
+                "AgentExecutionService LLM refinement slow for user %s (%.2fs)",
+                user_id,
+                duration,
+            )
+
+        if not llm_payload:
+            return message, metadata
+
+        refined = llm_payload.get("suggested_reply") or message
+        metadata.update(
+            {
+                "refined": refined != message,
+                "model": llm_payload.get("model"),
+                "sentiment": llm_payload.get("sentiment"),
+                "confidence": llm_payload.get("confidence"),
+                "tone_summary": llm_payload.get("tone_summary"),
+            }
+        )
+        return refined, metadata

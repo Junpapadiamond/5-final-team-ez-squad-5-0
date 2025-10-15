@@ -70,9 +70,12 @@ class AgentActivityStore:
         since: Optional[datetime] = None,
         scenario: Optional[str] = None,
         include_processed: bool = False,
+        user_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Return recent events ordered by most recent occurrence."""
         query: Dict[str, Any] = {}
+        if user_id:
+            query["user_id"] = str(user_id)
         if since:
             query["occurred_at"] = {"$gt": since}
         if scenario:
